@@ -1,0 +1,23 @@
+# Dependencies & Build Output
+node_modules/
+dist/
+
+# Local Environment Secrets
+.env
+.env.*
+!.env.example
+
+# IDEs & Editors
+.vscode/
+.idea/
+.phoenix/
+.brackets.json
+*.swp
+*.swo
+.DS_Store
+
+# AI Agent Caches
+.claude/
+.antigravity/
+.cursor/
+.windsurf/
