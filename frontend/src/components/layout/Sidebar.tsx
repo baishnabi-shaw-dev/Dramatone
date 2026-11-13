@@ -47,7 +47,7 @@ export function Sidebar({ activePage, isDark, onToggleTheme, onNavigate }: Sideb
 
   const navItems: { id: AppRoute; icon: typeof LayoutDashboard; label: string }[] = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Studio Workspace' },
-    { id: 'daw', icon: Piano, label: 'DAW Piano Roll' },
+    { id: 'daw', icon: Piano, label: 'DAW Roll & MIDI Studio' },
     { id: 'generator', icon: Wand2, label: 'Music Generator' },
     { id: 'soundscape', icon: Sparkles, label: 'Adaptive Soundscape' },
     { id: 'analysis', icon: Activity, label: 'Audio Analysis' },

@@ -32,7 +32,7 @@ export function AboutPage({ isDark, onToggleTheme, onNavigate }: AboutPageProps)
   const accentText = isDark ? 'text-orange-500' : 'text-indigo-600'
 
   return (
-    <main className={`relative min-h-screen flex items-center justify-center p-4 md:p-8 overflow-hidden select-none font-sans transition-colors duration-300 ${
+    <main className={`relative min-h-screen flex items-center justify-center p-4 md:p-8 overflow-x-hidden overflow-y-auto select-none font-sans transition-colors duration-300 ${
       isDark
         ? 'bg-[#0d0c11] text-zinc-100'
         : 'bg-gradient-to-br from-[#e7c6d9] via-[#dfd6eb] to-[#cbe0e4] text-slate-800'
@@ -44,7 +44,7 @@ export function AboutPage({ isDark, onToggleTheme, onNavigate }: AboutPageProps)
         isDark ? 'bg-orange-600/15' : 'bg-sky-300/45'
       }`} />
 
-      <section className={`relative z-10 w-full max-w-[1080px] rounded-[36px] border backdrop-blur-2xl p-7 md:p-12 flex flex-col justify-between min-h-[640px] transition-all duration-300 ${
+      <section className={`relative z-10 w-full max-w-[1080px] rounded-[36px] border backdrop-blur-2xl p-6 md:p-12 flex flex-col justify-between min-h-[500px] md:min-h-[640px] transition-all duration-300 ${
         isDark
           ? 'border-white/15 bg-white/[0.04] shadow-[0_30px_80px_rgba(0,0,0,0.85)]'
           : 'border-white/70 bg-white/45 shadow-[0_24px_70px_rgba(100,116,139,0.18)]'

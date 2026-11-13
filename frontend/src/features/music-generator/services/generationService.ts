@@ -16,12 +16,24 @@ export interface GeneratedTake {
 class GenerationService {
   public generateTrack(prompt: string, genre: string, mood: string, bpm: number): GeneratedTake {
     const p = (prompt || '').toLowerCase()
+
+    // 1. Explicit BPM parser: extract explicit BPM if prompted e.g. "90 BPM", "100bpm"
+    const bpmMatch = p.match(/(\d{2,3})\s*bpm/i)
+    const effectiveBpm = bpmMatch ? parseInt(bpmMatch[1], 10) : (bpm || 90)
+
+    // 2. Semantic keywords extraction
+    const hasStrings = p.includes('string') || p.includes('violin') || p.includes('cello') || p.includes('orchestr')
+    const hasRain = p.includes('rain') || p.includes('water') || p.includes('storm') || p.includes('weather') || p.includes('foley')
+    const hasBuild = p.includes('build') || p.includes('gradual') || p.includes('crescendo') || p.includes('swell') || p.includes('rise')
+    const hasSubBass = p.includes('sub') || p.includes('bass') || p.includes('drone')
+    const hasStaccato = p.includes('staccato') || p.includes('pulse') || p.includes('pulsing')
+
     let effectiveGenre = genre
     let effectiveMood = mood
 
-    // Smart prompt recognition: prioritize instrument/style mentioned in prompt
-    if (p.includes('eerie') || p.includes('dark') || p.includes('creepy') || p.includes('horror') || p.includes('scary') || p.includes('ghost') || p.includes('spooky') || p.includes('suspense')) {
-      effectiveGenre = 'Eerie & Dark Horror'
+    // Smart prompt recognition: prioritize rich acoustic/foley layers if prompted
+    if (hasRain || (hasStrings && (p.includes('dark') || p.includes('tense') || hasBuild || p.includes('cinematic')))) {
+      effectiveGenre = hasRain ? 'Dark Cinematic Build (Strings & Rain)' : 'Cinematic Score'
       effectiveMood = 'Tense'
     } else if (p.includes('trumpet') || p.includes('brass') || p.includes('horn') || p.includes('fanfare') || p.includes('bugle')) {
       effectiveGenre = 'Brass & Trumpet'
@@ -38,10 +50,21 @@ class GenerationService {
     } else if (p.includes('cinematic') || p.includes('epic') || p.includes('score') || p.includes('film')) {
       effectiveGenre = 'Cinematic Score'
       effectiveMood = 'Dramatic'
+    } else if (p.includes('eerie') || p.includes('dark') || p.includes('creepy') || p.includes('horror') || p.includes('scary')) {
+      effectiveGenre = 'Eerie & Dark Horror'
+      effectiveMood = 'Tense'
     }
 
-    // Load composition chords, scales, and BPM into audioEngine
-    audioEngine.loadComposition(effectiveGenre, effectiveMood, bpm)
+    const compositionOptions = {
+      hasStrings: hasStrings || effectiveGenre.includes('Cinematic') || effectiveGenre.includes('Strings'),
+      hasRainFoley: hasRain,
+      hasGradualBuild: hasBuild || effectiveGenre.includes('Build'),
+      hasSubBass: hasSubBass || effectiveGenre.includes('Cinematic') || effectiveGenre.includes('Dark'),
+      hasStaccato: hasStaccato || effectiveGenre.includes('Cinematic') || effectiveGenre.includes('Build')
+    }
+
+    // Load composition chords, scales, BPM, and synthesis options into audioEngine
+    audioEngine.loadComposition(effectiveGenre, effectiveMood, effectiveBpm, compositionOptions)
     const profile = audioEngine.getActiveProfile()
 
     // Dynamic bar visualization derived from mood energy
@@ -57,7 +80,7 @@ class GenerationService {
       title: `${titlePrefix} (${effectiveMood}) Take #${Math.floor(1 + Math.random() * 99)}`,
       seed: `SEED-${Math.floor(1000 + Math.random() * 9000)}`,
       key: profile.key,
-      bpm,
+      bpm: effectiveBpm,
       genre: effectiveGenre,
       mood: effectiveMood,
       bars
@@ -71,10 +94,10 @@ class GenerationService {
       bpm: take.bpm,
       tension: audioEngine.getTension(),
       stems: [
-        { id: 'keys', name: 'Dramatone Keys', volume: 80, muted: false, solo: false },
-        { id: 'drums', name: 'Neural Drums', volume: 85, muted: false, solo: false },
-        { id: 'guitar', name: 'Acoustic Pluck', volume: 75, muted: false, solo: false },
-        { id: 'vocal', name: 'Vocal Texture', volume: 70, muted: false, solo: false }
+        { id: 'keys', name: compositionOptions.hasStrings ? 'Cinematic Strings (Violin/Cello)' : 'Dramatone Keys', volume: 85, muted: false, solo: false },
+        { id: 'drums', name: compositionOptions.hasStrings ? 'Cinematic Timpani & Impacts' : 'Neural Drums', volume: compositionOptions.hasStrings ? 0 : 85, muted: compositionOptions.hasStrings, solo: false },
+        { id: 'guitar', name: compositionOptions.hasStaccato ? 'Staccato String Ostinato' : 'Acoustic Pluck', volume: 80, muted: false, solo: false },
+        { id: 'vocal', name: compositionOptions.hasRainFoley ? 'Ambient Rain Foley & Transients' : 'Vocal Texture', volume: 75, muted: false, solo: false }
       ]
     }).catch(() => {})
 
@@ -82,14 +105,32 @@ class GenerationService {
   }
 
   public auditionTake(take: GeneratedTake) {
-    audioEngine.loadComposition(take.genre, take.mood, take.bpm)
+    const isStrings = take.genre.includes('Cinematic') || take.genre.includes('Strings')
+    const hasRain = take.genre.includes('Rain')
+    const hasBuild = take.genre.includes('Build')
+    audioEngine.loadComposition(take.genre, take.mood, take.bpm, {
+      hasStrings: isStrings,
+      hasRainFoley: hasRain,
+      hasGradualBuild: hasBuild,
+      hasSubBass: isStrings,
+      hasStaccato: isStrings
+    })
     audioEngine.ensureContext()
     audioEngine.start()
   }
 
   public async downloadWav(take: GeneratedTake) {
-    audioEngine.loadComposition(take.genre, take.mood, take.bpm)
-    const blob = await audioEngine.exportSoundscapeWav(12)
+    const isStrings = take.genre.includes('Cinematic') || take.genre.includes('Strings')
+    const hasRain = take.genre.includes('Rain')
+    const hasBuild = take.genre.includes('Build')
+    audioEngine.loadComposition(take.genre, take.mood, take.bpm, {
+      hasStrings: isStrings,
+      hasRainFoley: hasRain,
+      hasGradualBuild: hasBuild,
+      hasSubBass: isStrings,
+      hasStaccato: isStrings
+    })
+    const blob = await audioEngine.exportSoundscapeWav(16)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url

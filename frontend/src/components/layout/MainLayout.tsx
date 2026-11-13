@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, ReactNode } from 'react'
 import {
   Play, Pause, Square, SkipBack, SkipForward, Volume2, VolumeX,
-  Film, Sparkles, Repeat, Upload, SlidersHorizontal, RotateCcw, Scissors, Mic
+  Film, Sparkles, Repeat, Upload, SlidersHorizontal, RotateCcw, Scissors, Mic, Music,
+  PanelRightClose, PanelRightOpen
 } from 'lucide-react'
 import { Sidebar, AppRoute } from './Sidebar'
 import { audioEngine } from '@/services/audioEngine'
@@ -42,14 +43,23 @@ export function MainLayout({
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1'>('16:9')
   const [trimStart, setTrimStart] = useState(0)
   const [trimEnd, setTrimEnd] = useState(100)
-  const [videoAudioMuted, setVideoAudioMuted] = useState(true)
+  const [videoAudioMuted, setVideoAudioMuted] = useState(false)
+  const [aiScoreMuted, setAiScoreMuted] = useState(false)
   const [dialogueDucking, setDialogueDucking] = useState(true)
   const [videoMotionEnergy, setVideoMotionEnergy] = useState(25)
   const [isExportingMix, setIsExportingMix] = useState(false)
   const [exportMixDone, setExportMixDone] = useState(false)
+  const [isSceneCollapsed, setIsSceneCollapsed] = useState(() => activePage !== 'dashboard')
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Dynamically adapt scene monitor based on active tool route
+  useEffect(() => {
+    if (activePage !== 'dashboard') {
+      setIsSceneCollapsed(true)
+    }
+  }, [activePage])
 
   // Sync Master Volume & Mute to AudioEngine
   useEffect(() => {
@@ -75,11 +85,8 @@ export function MainLayout({
     }
   }
 
-  // Global Keyboard Shortcuts (Space = Play/Pause, 1-7 = Switch Tool, 0 = Rewind, L = Loop)
+  // Global Keyboard Shortcuts (Space = Play/Pause, 0 = Rewind, L = Loop)
   useEffect(() => {
-    const toolRoutes: AppRoute[] = [
-      'dashboard', 'generator', 'soundscape', 'analysis', 'library', 'projects', 'settings'
-    ]
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
@@ -94,20 +101,21 @@ export function MainLayout({
         }
       } else if (e.key.toLowerCase() === 'l') {
         setIsLooping((prev) => !prev)
-      } else if (['1', '2', '3', '4', '5', '6', '7'].includes(e.key)) {
-        const idx = Number(e.key) - 1
-        if (toolRoutes[idx]) onNavigate(toolRoutes[idx])
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [onNavigate, trimStart])
+  }, [trimStart])
 
   // Sync HTML5 Video element with Web Audio Engine & Transport
   useEffect(() => {
     const vid = videoRef.current
     if (isPlaying) {
-      audioEngine.start()
+      if (audioEngine.hasComposition() && !aiScoreMuted) {
+        audioEngine.start()
+      } else {
+        audioEngine.stop()
+      }
       if (vid) {
         vid.muted = videoAudioMuted
         vid.playbackRate = playbackRate
@@ -123,7 +131,7 @@ export function MainLayout({
         vid.pause()
       }
     }
-  }, [isPlaying, uploadedVideoUrl, videoAudioMuted, playbackRate])
+  }, [isPlaying, uploadedVideoUrl, videoAudioMuted, aiScoreMuted, playbackRate])
 
   useEffect(() => {
     audioEngine.setDialogueDuckingEnabled(dialogueDucking)
@@ -158,6 +166,9 @@ export function MainLayout({
     setPlayhead(0)
     setTrimStart(0)
     setTrimEnd(100)
+    setIsPlaying(false)
+    setVideoAudioMuted(false)
+    audioEngine.resetComposition()
   }
 
   const handleScrub = (newPercent: number) => {
@@ -208,7 +219,7 @@ export function MainLayout({
   const accentText = isDark ? 'text-orange-500' : 'text-indigo-600'
 
   return (
-    <main className={`relative w-screen h-screen flex overflow-hidden select-none font-sans transition-colors duration-300 ${
+    <main className={`relative w-full h-[100dvh] flex overflow-hidden select-none font-sans transition-colors duration-300 ${
       isDark
         ? 'bg-[#0d0c11] text-zinc-100'
         : 'bg-gradient-to-br from-[#e7c6d9] via-[#dfd6eb] to-[#cbe0e4] text-slate-800'
@@ -235,78 +246,104 @@ export function MainLayout({
       }`}>
         
         {/* Top Editor Header Bar */}
-        <header className={`px-4 py-2 border-b flex items-center justify-between gap-3 shrink-0 ${
+        <header className={`px-3 sm:px-4 py-2 border-b flex items-center justify-between gap-3 shrink-0 ${
           isDark ? 'border-white/10 bg-black/50' : 'border-white/60 bg-white/55'
         }`}>
-          <div className="flex items-center gap-3">
-            <div className={`flex items-center gap-1 ${accentText}`}>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`flex items-center gap-1 shrink-0 ${accentText}`}>
               <span className="w-1 h-3 bg-current rounded-full" />
               <span className="w-1 h-4 bg-current rounded-full" />
               <span className="w-1 h-2.5 bg-current rounded-full" />
             </div>
-            <span className={`font-bold text-sm tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+            <span className={`font-bold text-sm tracking-tight truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>
               Dramatone <span className={accentText}>Studio</span>
             </span>
-            <span className={`text-xs px-2.5 py-0.5 rounded-full border font-medium ${
+            <span className={`text-xs px-2.5 py-0.5 rounded-full border font-medium shrink-0 ${
               isDark ? 'border-white/10 bg-white/5 text-zinc-200' : 'border-white/80 bg-white/80 text-slate-900'
             }`}>
               {title}
             </span>
             {subtitle && (
-              <span className={`hidden md:inline text-[11px] ${isDark ? 'text-zinc-500' : 'text-slate-600'}`}>
+              <span className={`hidden lg:inline text-[11px] truncate opacity-70 ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
                 {subtitle}
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2 text-[11px] font-mono">
-            <span className={`px-2.5 py-0.5 rounded-lg border tracking-wider font-semibold ${
+          <div className="flex items-center gap-2 text-[11px] font-mono shrink-0">
+            <span className={`hidden md:inline px-2.5 py-0.5 rounded-lg border tracking-wider font-semibold ${
               isDark ? 'border-white/10 bg-black/40 text-amber-300' : 'border-white/80 bg-white/80 text-indigo-700'
             }`}>
               TC {formatTimecode(playhead)}
             </span>
+
+            {/* Dynamic Full Canvas / Scene Monitor Toggle */}
+            <button
+              onClick={() => setIsSceneCollapsed((prev) => !prev)}
+              title={isSceneCollapsed ? 'Open Video Scene Monitor' : 'Expand Studio Canvas to Full Width'}
+              className={`px-3 py-1 rounded-full border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                !isSceneCollapsed
+                  ? isDark ? 'border-orange-500/40 bg-orange-500/15 text-orange-400 hover:bg-orange-500/25' : 'border-indigo-400 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                  : isDark ? 'border-white/10 bg-white/5 text-zinc-300 hover:text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {isSceneCollapsed ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{isSceneCollapsed ? 'Show Scene Monitor' : 'Full Canvas'}</span>
+            </button>
+
             <button
               onClick={handleExportMix}
               disabled={isExportingMix}
               className={`px-3.5 py-1 rounded-full bg-gradient-to-r font-sans font-semibold text-xs cursor-pointer hover:brightness-110 transition flex items-center gap-1.5 ${accentGradient}`}
             >
-              {isExportingMix ? 'Rendering WAV...' : exportMixDone ? 'Exported!' : 'Export Mix'}
+              {isExportingMix ? 'Rendering...' : exportMixDone ? 'Exported!' : 'Export Mix'}
             </button>
           </div>
         </header>
 
         {/* ================= MAIN EDITOR AREA ================= */}
-        <div className="flex-1 flex flex-col gap-3 p-3 overflow-y-auto">
+        <div className="flex-1 flex flex-col gap-3 p-2.5 sm:p-3 overflow-y-auto min-h-0">
           
-          {/* UPPER SPLIT: Top-Left Active Tool Panel (7 cols) + Top-Right Video Preview & Self-Edit Monitor (5 cols) */}
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 shrink-0">
+          {/* Dynamic Upper Split: Active Tool Area (spans 12 cols when monitor is collapsed) + Optional Video Monitor */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 min-h-full">
             
-            {/* TOP-LEFT: Active Tool / Prompt / Timeline Controls */}
-            <div className="xl:col-span-7 flex flex-col gap-3">
+            {/* Active Tool Area */}
+            <div className={`${isSceneCollapsed ? 'xl:col-span-12' : 'xl:col-span-7'} flex flex-col gap-3 min-w-0 transition-all duration-300`}>
               {children}
             </div>
 
-            {/* TOP-RIGHT: Filmora-Style Video Preview Monitor + Minor Editing Controls */}
-            <aside className={`xl:col-span-5 rounded-3xl border backdrop-blur-xl p-3.5 flex flex-col justify-between gap-2.5 ${
-              isDark ? 'border-white/10 bg-black/50' : 'border-white/75 bg-white/65 shadow-sm'
-            }`}>
-              {/* Video Monitor Top Controls */}
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <Film className={`w-3.5 h-3.5 shrink-0 ${accentText}`} />
-                  <span className={`text-xs font-semibold truncate ${isDark ? 'text-zinc-100' : 'text-slate-900'}`}>
-                    {uploadedFileName}
-                  </span>
-                </div>
+            {/* Video Preview Monitor */}
+            {!isSceneCollapsed && (
+              <aside className={`xl:col-span-5 rounded-3xl border backdrop-blur-xl p-3.5 flex flex-col gap-3 overflow-y-auto max-h-full min-w-0 transition-all duration-300 ${
+                isDark ? 'border-white/10 bg-black/50' : 'border-white/75 bg-white/65 shadow-sm'
+              }`}>
+                {/* Video Monitor Top Controls */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Film className={`w-3.5 h-3.5 shrink-0 ${accentText}`} />
+                    <span className={`text-xs font-semibold truncate ${isDark ? 'text-zinc-100' : 'text-slate-900'}`}>
+                      {uploadedFileName}
+                    </span>
+                  </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="video/*"
-                    onChange={handleVideoUpload}
-                    className="hidden"
-                  />
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => setIsSceneCollapsed(true)}
+                      title="Collapse Scene Monitor"
+                      className={`p-1.5 rounded-lg border cursor-pointer transition ${
+                        isDark ? 'border-white/10 text-zinc-400 hover:text-white hover:bg-white/10' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <PanelRightClose className="w-3.5 h-3.5" />
+                    </button>
+
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="video/*"
+                      onChange={handleVideoUpload}
+                      className="hidden"
+                    />
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className={`px-2.5 py-1 rounded-full text-[10px] font-medium flex items-center gap-1 border cursor-pointer transition ${
@@ -501,13 +538,26 @@ export function MainLayout({
                       <button
                         onClick={() => setVideoAudioMuted(!videoAudioMuted)}
                         title="Mute/Unmute Original Video Audio"
-                        className={`px-2 py-0.5 rounded text-[10px] cursor-pointer ${
+                        className={`px-2 py-0.5 rounded text-[10px] flex items-center gap-1 cursor-pointer transition ${
                           !videoAudioMuted
-                            ? isDark ? 'bg-orange-500/20 text-orange-400' : 'bg-indigo-500/15 text-indigo-700'
-                            : isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-slate-200 text-slate-600'
+                            ? isDark ? 'bg-orange-500/20 text-orange-400 border border-orange-500/40' : 'bg-indigo-500/15 text-indigo-700 border border-indigo-500/30'
+                            : isDark ? 'bg-zinc-800 text-zinc-400 border border-white/5' : 'bg-slate-200 text-slate-600 border border-slate-300'
                         }`}
                       >
-                        {videoAudioMuted ? 'Vid Muted' : 'Vid Audio'}
+                        {videoAudioMuted ? <VolumeX className="w-2.5 h-2.5 text-zinc-400" /> : <Volume2 className="w-2.5 h-2.5" />}
+                        <span>{videoAudioMuted ? 'Vid Muted' : 'Vid Audio'}</span>
+                      </button>
+                      <button
+                        onClick={() => setAiScoreMuted(!aiScoreMuted)}
+                        title={audioEngine.hasComposition() ? "Toggle generated background music" : "No AI score generated yet"}
+                        className={`px-2 py-0.5 rounded text-[10px] flex items-center gap-1 cursor-pointer transition ${
+                          !aiScoreMuted && audioEngine.hasComposition()
+                            ? isDark ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-emerald-500/15 text-emerald-800 border border-emerald-500/30'
+                            : isDark ? 'bg-zinc-800 text-zinc-500 border border-white/5' : 'bg-slate-200 text-slate-500 border border-slate-300'
+                        }`}
+                      >
+                        <Music className="w-2.5 h-2.5" />
+                        <span>{!aiScoreMuted && audioEngine.hasComposition() ? 'AI Score ON' : 'AI Score Off'}</span>
                       </button>
                       <button
                         onClick={resetVideoEdits}
@@ -573,6 +623,7 @@ export function MainLayout({
                 </div>
               )}
             </aside>
+          )}
           </div>
         </div>
 

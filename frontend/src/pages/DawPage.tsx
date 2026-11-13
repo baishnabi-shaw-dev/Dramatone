@@ -16,14 +16,13 @@ export function DawPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
       isDark={isDark}
       onToggleTheme={onToggleTheme}
       onNavigate={onNavigate}
-      title="DAW Piano Roll & MIDI Studio"
+      title="DAW Roll & MIDI Studio"
       subtitle="Interactive Multi-Octave Piano Roll with Native Web MIDI Hardware Input"
     >
-      <div className="space-y-4 flex-1 flex flex-col justify-between">
+      <div className="flex-1 flex flex-col gap-3 min-h-[500px]">
         {/* Top Info Banner */}
-        <div className={`px-4 py-2 rounded-2xl border text-xs flex items-center justify-between ${
-          isDark ? 'border-orange-500/30 bg-orange-950/20 text-zinc-300' : 'border-indigo-200 bg-indigo-50/70 text-slate-800'
-        }`}>
+        <div className={`px-4 py-2 rounded-2xl border text-xs flex items-center justify-between shrink-0 ${isDark ? 'border-orange-500/30 bg-orange-950/20 text-zinc-300' : 'border-indigo-200 bg-indigo-50/70 text-slate-800'
+          }`}>
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-orange-400 shrink-0" />
             <span>
@@ -33,7 +32,7 @@ export function DawPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
 
           <button
             onClick={() => onNavigate('dashboard')}
-            className="flex items-center gap-1 font-semibold text-orange-400 hover:underline cursor-pointer"
+            className="flex items-center gap-1 font-semibold text-orange-400 hover:underline cursor-pointer shrink-0"
           >
             <span>Back to Video Timeline</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -41,7 +40,7 @@ export function DawPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
         </div>
 
         {/* The DAW Piano Roll */}
-        <DawPianoRoll isDark={isDark} className="flex-1" />
+        <DawPianoRoll isDark={isDark} className="flex-1 min-h-[440px]" />
       </div>
     </MainLayout>
   )
