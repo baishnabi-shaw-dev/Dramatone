@@ -1,5 +1,7 @@
-import { Sun, Moon, Cpu, Layers, Radio, Sparkles, ArrowRight } from 'lucide-react'
+import { useState } from 'react'
+import { Sun, Moon, Cpu, Layers, Radio, Sparkles, ArrowRight, User, LogOut } from 'lucide-react'
 import { AppRoute } from '@/components/layout/Sidebar'
+import { apiClient } from '@/services/apiClient'
 
 interface AboutPageProps {
   isDark: boolean
@@ -8,6 +10,7 @@ interface AboutPageProps {
 }
 
 export function AboutPage({ isDark, onToggleTheme, onNavigate }: AboutPageProps) {
+  const [currentUser, setCurrentUser] = useState(() => apiClient.getCurrentUser())
   const pillars = [
     {
       icon: Cpu,
@@ -66,7 +69,7 @@ export function AboutPage({ isDark, onToggleTheme, onNavigate }: AboutPageProps)
             <button onClick={() => onNavigate('features')} className={`transition cursor-pointer ${isDark ? 'text-zinc-400 hover:text-zinc-200' : 'text-slate-700 hover:text-slate-950'}`}>Features</button>
           </nav>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <button
               onClick={onToggleTheme}
               title="Toggle Theme"
@@ -76,10 +79,39 @@ export function AboutPage({ isDark, onToggleTheme, onNavigate }: AboutPageProps)
             >
               {isDark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
             </button>
-            <button onClick={() => onNavigate('login')} className={`text-xs font-medium cursor-pointer ${isDark ? 'text-zinc-300 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}>Log In</button>
-            <button onClick={() => onNavigate('signup')} className={`text-xs font-medium px-4 py-2 rounded-full border cursor-pointer ${
-              isDark ? 'border-orange-500/45 text-orange-300 hover:bg-orange-500/10' : 'border-white/80 text-indigo-700 bg-white/65 hover:bg-white'
-            }`}>Get Started</button>
+            {currentUser ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => onNavigate('dashboard')}
+                  className={`text-xs font-semibold px-4 py-2 rounded-full bg-gradient-to-r hover:brightness-110 transition cursor-pointer flex items-center gap-1.5 ${
+                    isDark ? 'from-orange-500 to-amber-500 text-zinc-950' : 'from-sky-500 to-indigo-600 text-white'
+                  }`}
+                >
+                  <User className="w-3.5 h-3.5" />
+                  <span>{currentUser.name.split(' ')[0]}'s Studio</span>
+                </button>
+                <button
+                  onClick={() => {
+                    apiClient.logout()
+                    setCurrentUser(null)
+                    onNavigate('home')
+                  }}
+                  title="Sign Out"
+                  className={`p-2 rounded-full border transition cursor-pointer ${
+                    isDark ? 'border-white/15 text-zinc-400 hover:text-white' : 'border-slate-300 text-slate-600'
+                  }`}
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <button onClick={() => onNavigate('login')} className={`text-xs font-medium cursor-pointer ${isDark ? 'text-zinc-300 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}>Log In</button>
+                <button onClick={() => onNavigate('signup')} className={`text-xs font-medium px-4 py-2 rounded-full border cursor-pointer ${
+                  isDark ? 'border-orange-500/45 text-orange-300 hover:bg-orange-500/10' : 'border-white/80 text-indigo-700 bg-white/65 hover:bg-white'
+                }`}>Get Started</button>
+              </>
+            )}
           </div>
         </header>
 

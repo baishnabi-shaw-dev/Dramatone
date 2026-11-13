@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Sparkles, Wand2, Plus, Piano, Drum, Guitar, Mic2, Film, Scissors, Download, Save, Check } from 'lucide-react'
+import { Sparkles, Wand2, Plus, Piano, Drum, Guitar, Mic2, Film, Scissors, Download, Save, Check, Layers } from 'lucide-react'
 import { MainLayout } from '@/components/layout/MainLayout'
 import { AppRoute } from '@/components/layout/Sidebar'
+import { DawPianoRoll } from '@/components/daw/DawPianoRoll'
 import { audioEngine, StemId } from '@/services/audioEngine'
 import { apiClient } from '@/services/apiClient'
 import { soundscapeService } from '@/features/adaptive-soundscape/services/soundscapeService'
@@ -13,18 +14,19 @@ interface PageProps {
 }
 
 export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
-  const [promptText, setPromptText] = useState('Warm analog arpeggio with punchy sub-bass and airy vocal Dramatones')
+  const [promptText, setPromptText] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
-  const [playhead, setPlayhead] = useState(24)
+  const [playhead, setPlayhead] = useState(0)
   const [stems, setStems] = useState([
-    { id: 'keys', name: 'Dramatone Keys', type: 'keys', muted: false, solo: false, bars: [35, 60, 80, 45, 70, 95, 65, 50, 85, 90, 60, 40, 75, 88, 55, 42, 68, 92, 74, 50, 65, 82, 54, 38] },
-    { id: 'drums', name: 'Neural Drums', type: 'drums', muted: false, solo: false, bars: [90, 30, 65, 35, 95, 25, 70, 40, 92, 30, 68, 35, 96, 28, 72, 42, 88, 32, 66, 38, 91, 29, 70, 40] },
-    { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', muted: false, solo: false, bars: [25, 45, 55, 70, 60, 40, 50, 75, 80, 65, 45, 35, 55, 72, 68, 50, 42, 60, 78, 62, 48, 36, 52, 30] },
-    { id: 'vocal', name: 'Vocal Texture', type: 'vocal', muted: false, solo: false, bars: [15, 20, 45, 78, 88, 92, 70, 40, 20, 15, 50, 82, 95, 85, 60, 30, 18, 48, 76, 90, 74, 42, 22, 16] }
+    { id: 'keys', name: 'Keys / Harmony', type: 'keys', volume: 80, muted: false, solo: false, bars: [] as number[] },
+    { id: 'drums', name: 'Neural Drums', type: 'drums', volume: 80, muted: false, solo: false, bars: [] as number[] },
+    { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', volume: 75, muted: false, solo: false, bars: [] as number[] },
+    { id: 'vocal', name: 'Atmosphere / Texture', type: 'vocal', volume: 70, muted: false, solo: false, bars: [] as number[] }
   ])
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
+  const [viewMode, setViewMode] = useState<'stems' | 'piano-roll'>('stems')
 
   const cardClass = isDark ? 'border-white/10 bg-black/45' : 'border-white/75 bg-white/60 shadow-sm'
   const accentText = isDark ? 'text-orange-500' : 'text-indigo-600'
@@ -33,16 +35,76 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
     setIsGenerating(true)
     audioEngine.ensureContext()
     setTimeout(() => {
-      // Randomize bar shapes and modulate tension
+      const p = promptText.toLowerCase()
+      const isEerie = p.includes('eerie') || p.includes('dark') || p.includes('creepy') || p.includes('horror') || p.includes('scary') || p.includes('ghost') || p.includes('spooky') || p.includes('suspense')
+      const isTrumpet = p.includes('trumpet') || p.includes('brass') || p.includes('horn') || p.includes('fanfare')
+
+      if (isEerie) {
+        audioEngine.loadComposition('Eerie & Dark Horror', 'Tense', 62)
+        audioEngine.setTension(80)
+      } else if (isTrumpet) {
+        audioEngine.loadComposition('Brass & Trumpet', 'Heroic', 104)
+        audioEngine.setTension(60)
+      } else if (p.includes('lo-fi') || p.includes('chill') || p.includes('piano')) {
+        audioEngine.loadComposition('Lo-Fi Chill', 'Chill', 85)
+        audioEngine.setTension(40)
+      } else if (p.includes('cinematic') || p.includes('epic') || p.includes('film')) {
+        audioEngine.loadComposition('Cinematic Score', 'Dramatic', 90)
+        audioEngine.setTension(70)
+      } else if (p.includes('action') || p.includes('cyber') || p.includes('pulse')) {
+        audioEngine.loadComposition('Cyberpunk', 'Suspense', 130)
+        audioEngine.setTension(85)
+      } else if (p.includes('ambient') || p.includes('drone')) {
+        audioEngine.loadComposition('Ambient Drone', 'Calm', 72)
+        audioEngine.setTension(25)
+      } else {
+        audioEngine.loadComposition('Cinematic Score', 'Dramatic', 90)
+        audioEngine.setTension(55)
+      }
+
       setStems((prev) =>
         prev.map((s) => ({
           ...s,
+          name: s.id === 'keys'
+            ? isEerie ? 'Dissonant Drone Pad' : isTrumpet ? 'Trumpet / Brass Lead' : 'Dramatone Keys'
+            : s.id === 'vocal'
+            ? isEerie ? 'Phantom Whisper Texture' : 'Vocal Texture'
+            : s.name,
           bars: s.bars.map(() => Math.floor(20 + Math.random() * 75))
         }))
       )
-      audioEngine.setTension(65)
       setIsGenerating(false)
-    }, 500)
+    }, 400)
+  }
+
+  const handleSelectPreset = (preset: string) => {
+    if (preset === 'Trumpet Fanfare') {
+      audioEngine.loadComposition('Brass & Trumpet', 'Heroic', 104)
+      audioEngine.setTension(60)
+      setPromptText('Brass trumpet fanfare with majestic brass chords and heroic melody, 104 BPM')
+    } else if (preset === 'Cinematic Riser') {
+      audioEngine.loadComposition('Cinematic Score', 'Dramatic', 90)
+      audioEngine.setTension(75)
+      setPromptText('Cinematic Riser with escalating string swells and brass impacts, 90 BPM')
+    } else if (preset === 'Lo-Fi Beat') {
+      audioEngine.loadComposition('Lo-Fi Chill', 'Chill', 85)
+      audioEngine.setTension(40)
+      setPromptText('Lo-Fi Beat with dusty keys, relaxed vinyl crackle and mellow Rhodes chords, 85 BPM')
+    } else if (preset === 'Ambient Pad') {
+      audioEngine.loadComposition('Ambient Drone', 'Calm', 72)
+      audioEngine.setTension(20)
+      setPromptText('Ambient Pad with warm ethereal drones, sus2 chords, and tape flutter, 72 BPM')
+    } else if (preset === 'Action Pulse') {
+      audioEngine.loadComposition('Cyberpunk', 'Suspense', 130)
+      audioEngine.setTension(85)
+      setPromptText('Action Pulse with driving synth bassline, industrial percussion and glitch risers, 130 BPM')
+    }
+    setStems((prev) =>
+      prev.map((s) => ({
+        ...s,
+        bars: s.bars.map(() => Math.floor(20 + Math.random() * 75))
+      }))
+    )
   }
 
   const handleToggleMute = (stemId: string) => {
@@ -78,13 +140,14 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   const handleSaveProject = async () => {
     setSaveStatus('Saving...')
     try {
+      const activeProf = audioEngine.getActiveProfile()
       const saved = await apiClient.saveProject({
         title: promptText.slice(0, 32) || 'Untitled Soundscape',
-        genre: 'Synthwave',
-        mood: 'Euphoric',
+        genre: activeProf.genre || 'Custom',
+        mood: activeProf.mood || 'Neutral',
         bpm: audioEngine.getBpm(),
         tension: audioEngine.getTension(),
-        stems: stems.map((s) => ({ id: s.id, name: s.name, volume: 80, muted: s.muted, solo: s.solo }))
+        stems: stems.map((s) => ({ id: s.id, name: s.name, volume: s.volume, muted: s.muted, solo: s.solo }))
       })
       setSaveStatus(saved.syncedToCloud ? 'Saved to MongoDB!' : 'Saved Locally!')
       setTimeout(() => setSaveStatus(null), 3000)
@@ -142,18 +205,19 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         <textarea
           rows={2}
           value={promptText}
+          placeholder="Describe your desired soundscape (e.g. 'eerie sound', 'brass fanfare', 'cinematic score')..."
           onChange={(e) => setPromptText(e.target.value)}
           className={`w-full rounded-2xl border p-2.5 text-xs resize-none focus:outline-none ${
-            isDark ? 'bg-zinc-950/70 border-white/10 text-zinc-100' : 'bg-white/80 border-white text-slate-900'
+            isDark ? 'bg-zinc-950/70 border-white/10 text-zinc-100 placeholder:text-zinc-600' : 'bg-white/80 border-white text-slate-900 placeholder:text-slate-400'
           }`}
         />
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap gap-1.5">
-            {['Cinematic Riser', 'Lo-Fi Beat', 'Ambient Pad', 'Action Pulse'].map((preset) => (
+            {['Trumpet Fanfare', 'Cinematic Riser', 'Lo-Fi Beat', 'Ambient Pad', 'Action Pulse'].map((preset) => (
               <button
                 key={preset}
-                onClick={() => setPromptText(`${preset} tailored to match video scene transitions, 118 BPM`)}
+                onClick={() => handleSelectPreset(preset)}
                 className={`px-2.5 py-1 rounded-full text-[10px] font-medium border cursor-pointer transition ${
                   isDark
                     ? 'border-white/10 bg-white/5 text-zinc-300 hover:border-orange-500/40'
@@ -183,6 +247,34 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         {/* Timeline Ruler & Split Toolbar */}
         <div className="flex items-center justify-between pb-1 border-b border-white/10">
           <div className="flex items-center gap-2">
+            {/* View Switcher: Stems vs DAW Piano Roll */}
+            <div className={`flex items-center gap-1 p-0.5 rounded-xl border text-[10px] ${
+              isDark ? 'border-white/10 bg-black/40' : 'border-slate-200 bg-slate-100'
+            }`}>
+              <button
+                onClick={() => setViewMode('stems')}
+                className={`px-2 py-0.5 rounded-lg font-semibold flex items-center gap-1 cursor-pointer transition ${
+                  viewMode === 'stems'
+                    ? isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
+                    : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-600 hover:text-slate-950'
+                }`}
+              >
+                <Layers className="w-3 h-3" />
+                Stems View
+              </button>
+              <button
+                onClick={() => setViewMode('piano-roll')}
+                className={`px-2 py-0.5 rounded-lg font-semibold flex items-center gap-1 cursor-pointer transition ${
+                  viewMode === 'piano-roll'
+                    ? isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
+                    : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-600 hover:text-slate-950'
+                }`}
+              >
+                <Piano className="w-3 h-3" />
+                DAW Piano Roll &amp; MIDI
+              </button>
+            </div>
+
             <button
               onClick={handleSplitAtPlayhead}
               className={`px-2.5 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 cursor-pointer ${
@@ -248,6 +340,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
                     id: `custom-${Date.now()}`,
                     name: `Synth Layer 0${prev.length + 1}`,
                     type: 'keys',
+                    volume: 75,
                     muted: false,
                     solo: false,
                     bars: Array.from({ length: 24 }, () => Math.floor(25 + Math.random() * 70))
@@ -264,81 +357,24 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
           </div>
         </div>
 
-        {/* Tracks Stack: 1 Video Track + 4 Audio Stem Tracks */}
-        <div className="space-y-1.5 overflow-y-auto">
-          {/* Video Track Lane */}
-          <div className={`p-2 rounded-2xl border flex items-center gap-3 ${
-            isDark ? 'border-orange-500/30 bg-orange-500/10' : 'border-indigo-400/40 bg-indigo-500/10'
-          }`}>
-            <div className="w-28 shrink-0 flex items-center gap-2">
-              <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${
-                isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
-              }`}>
-                <Film className="w-3.5 h-3.5" />
-              </div>
-              <span className={`text-[11px] font-semibold truncate ${isDark ? 'text-orange-300' : 'text-indigo-900'}`}>
-                Video Track
-              </span>
-            </div>
-
-            <div
-              onClick={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect()
-                setPlayhead(((e.clientX - rect.left) / rect.width) * 100)
-              }}
-              className={`flex-1 h-7 rounded-xl px-2 flex items-center justify-between relative overflow-hidden cursor-pointer ${
-                isDark ? 'bg-black/40 border border-orange-500/20' : 'bg-white/70 border border-indigo-300/50'
-              }`}
-            >
-              <span className={`text-[10px] font-mono ${isDark ? 'text-orange-200/80' : 'text-indigo-800'}`}>
-                [ Main_Video_Clip.mp4 • 24fps ]
-              </span>
-              <div
-                style={{ left: `${playhead}%` }}
-                className="absolute top-0 bottom-0 w-[2px] bg-red-500 pointer-events-none"
-              />
-            </div>
-          </div>
-
-          {/* Audio Stem Lanes */}
-          {stems.map((stem) => (
-            <div
-              key={stem.id}
-              className={`p-2 rounded-2xl border flex items-center gap-3 ${
-                stem.muted ? 'opacity-45' : 'opacity-100'
-              } ${isDark ? 'border-white/10 bg-zinc-950/60' : 'border-white/80 bg-white/75'}`}
-            >
-              <div className="w-28 shrink-0 flex items-center justify-between gap-1">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  {stem.type === 'keys' && <Piano className={`w-3.5 h-3.5 shrink-0 ${accentText}`} />}
-                  {stem.type === 'drums' && <Drum className={`w-3.5 h-3.5 shrink-0 ${isDark ? 'text-amber-500' : 'text-violet-600'}`} />}
-                  {stem.type === 'guitar' && <Guitar className={`w-3.5 h-3.5 shrink-0 ${isDark ? 'text-orange-600' : 'text-sky-600'}`} />}
-                  {stem.type === 'vocal' && <Mic2 className="w-3.5 h-3.5 shrink-0 text-rose-500" />}
-                  <span className={`text-[11px] font-semibold truncate ${isDark ? 'text-zinc-200' : 'text-slate-900'}`}>
-                    {stem.name}
-                  </span>
+        {/* Tracks Stack or DAW Piano Roll */}
+        {viewMode === 'piano-roll' ? (
+          <DawPianoRoll isDark={isDark} showFullHeader={true} className="my-1 flex-1" />
+        ) : (
+          <div className="space-y-1.5 overflow-y-auto">
+            {/* Video Track Lane */}
+            <div className={`p-2 rounded-2xl border flex items-center gap-3 ${
+              isDark ? 'border-orange-500/30 bg-orange-500/10' : 'border-indigo-400/40 bg-indigo-500/10'
+            }`}>
+              <div className="w-28 shrink-0 flex items-center gap-2">
+                <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${
+                  isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
+                }`}>
+                  <Film className="w-3.5 h-3.5" />
                 </div>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => handleToggleMute(stem.id)}
-                    className={`px-1 rounded text-[9px] font-bold cursor-pointer ${
-                      stem.muted ? 'bg-red-500 text-white' : isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    M
-                  </button>
-                  <button
-                    onClick={() => handleToggleSolo(stem.id)}
-                    className={`px-1 rounded text-[9px] font-bold cursor-pointer ${
-                      stem.solo
-                        ? isDark ? 'bg-amber-400 text-zinc-950' : 'bg-indigo-600 text-white'
-                        : isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-slate-200 text-slate-700'
-                    }`}
-                  >
-                    S
-                  </button>
-                </div>
+                <span className={`text-[11px] font-semibold truncate ${isDark ? 'text-orange-300' : 'text-indigo-900'}`}>
+                  Video Track
+                </span>
               </div>
 
               <div
@@ -346,27 +382,94 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
                   const rect = e.currentTarget.getBoundingClientRect()
                   setPlayhead(((e.clientX - rect.left) / rect.width) * 100)
                 }}
-                className={`flex-1 h-7 rounded-xl px-2 flex items-center justify-between gap-1 relative overflow-hidden cursor-pointer ${
-                  isDark ? 'bg-black/50' : 'bg-slate-900/5'
+                className={`flex-1 h-7 rounded-xl px-2 flex items-center justify-between relative overflow-hidden cursor-pointer ${
+                  isDark ? 'bg-black/40 border border-orange-500/20' : 'bg-white/70 border border-indigo-300/50'
                 }`}
               >
-                {stem.bars.map((val, idx) => (
-                  <span
-                    key={idx}
-                    style={{ height: `${val}%` }}
-                    className={`w-1 rounded-full bg-gradient-to-t ${
-                      isDark ? 'from-orange-500 to-amber-300' : 'from-violet-500 via-indigo-500 to-sky-400'
-                    }`}
-                  />
-                ))}
+                <span className={`text-[10px] font-mono ${isDark ? 'text-orange-200/80' : 'text-indigo-800'}`}>
+                  [ Main_Video_Clip.mp4 • 24fps ]
+                </span>
                 <div
                   style={{ left: `${playhead}%` }}
                   className="absolute top-0 bottom-0 w-[2px] bg-red-500 pointer-events-none"
                 />
               </div>
             </div>
-          ))}
-        </div>
+
+            {/* Audio Stem Lanes */}
+            {stems.map((stem) => (
+              <div
+                key={stem.id}
+                className={`p-2 rounded-2xl border flex items-center gap-3 ${
+                  stem.muted ? 'opacity-45' : 'opacity-100'
+                } ${isDark ? 'border-white/10 bg-zinc-950/60' : 'border-white/80 bg-white/75'}`}
+              >
+                <div className="w-36 shrink-0 flex items-center justify-between gap-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {stem.type === 'keys' && <Piano className={`w-3.5 h-3.5 shrink-0 ${accentText}`} />}
+                    {stem.type === 'drums' && <Drum className={`w-3.5 h-3.5 shrink-0 ${isDark ? 'text-amber-500' : 'text-violet-600'}`} />}
+                    {stem.type === 'guitar' && <Guitar className={`w-3.5 h-3.5 shrink-0 ${isDark ? 'text-orange-600' : 'text-sky-600'}`} />}
+                    {stem.type === 'vocal' && <Mic2 className="w-3.5 h-3.5 shrink-0 text-rose-500" />}
+                    <span className={`text-[11px] font-semibold truncate ${isDark ? 'text-zinc-200' : 'text-slate-900'}`}>
+                      {stem.name}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => handleToggleMute(stem.id)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer transition ${
+                        stem.muted ? 'bg-red-500 text-white' : isDark ? 'bg-zinc-800 text-zinc-400 hover:text-white' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                      }`}
+                    >
+                      M
+                    </button>
+                    <button
+                      onClick={() => handleToggleSolo(stem.id)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer transition ${
+                        stem.solo
+                          ? isDark ? 'bg-amber-400 text-zinc-950 font-extrabold' : 'bg-indigo-600 text-white font-extrabold'
+                          : isDark ? 'bg-zinc-800 text-zinc-400 hover:text-white' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                      }`}
+                    >
+                      S
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect()
+                    setPlayhead(((e.clientX - rect.left) / rect.width) * 100)
+                  }}
+                  className={`flex-1 h-7 rounded-xl px-2 flex items-center justify-between gap-1 relative overflow-hidden cursor-pointer ${
+                    isDark ? 'bg-black/50' : 'bg-slate-900/5'
+                  }`}
+                >
+                  {stem.bars.length === 0 ? (
+                    <div className="w-full h-full flex items-center justify-center text-[10px] opacity-35 font-mono select-none">
+                      Empty Track • Enter prompt or pick a preset to synthesize audio
+                    </div>
+                  ) : (
+                    stem.bars.map((val, idx) => (
+                      <span
+                        key={idx}
+                        style={{ height: `${val}%` }}
+                        className={`w-1 rounded-full bg-gradient-to-t ${
+                          isDark ? 'from-orange-500 to-amber-300' : 'from-violet-500 via-indigo-500 to-sky-400'
+                        }`}
+                      />
+                    ))
+                  )}
+                  <div
+                    style={{ left: `${playhead}%` }}
+                    className="absolute top-0 bottom-0 w-[2px] bg-red-500 pointer-events-none"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </MainLayout>
   )

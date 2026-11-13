@@ -28,8 +28,8 @@ export function MainLayout({
 }: MainLayoutProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [isLooping, setIsLooping] = useState(true)
-  const [playhead, setPlayhead] = useState(24)
-  const [masterVolume, setMasterVolume] = useState(80)
+  const [playhead, setPlayhead] = useState(0)
+  const [masterVolume, setMasterVolume] = useState(85)
   const [isMasterMuted, setIsMasterMuted] = useState(false)
 
   // Video Upload & Minor Self-Editing States
@@ -45,9 +45,35 @@ export function MainLayout({
   const [videoAudioMuted, setVideoAudioMuted] = useState(true)
   const [dialogueDucking, setDialogueDucking] = useState(true)
   const [videoMotionEnergy, setVideoMotionEnergy] = useState(25)
+  const [isExportingMix, setIsExportingMix] = useState(false)
+  const [exportMixDone, setExportMixDone] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Sync Master Volume & Mute to AudioEngine
+  useEffect(() => {
+    audioEngine.setMasterVolume(masterVolume, isMasterMuted)
+  }, [masterVolume, isMasterMuted])
+
+  const handleExportMix = async () => {
+    setIsExportingMix(true)
+    try {
+      const blob = await audioEngine.exportSoundscapeWav(15)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${uploadedFileName.replace(/\.[^/.]+$/, '')}_dramatone_mix.wav`
+      a.click()
+      URL.revokeObjectURL(url)
+      setExportMixDone(true)
+      setTimeout(() => setExportMixDone(false), 3000)
+    } catch (err) {
+      console.error('Master export error:', err)
+    } finally {
+      setIsExportingMix(false)
+    }
+  }
 
   // Global Keyboard Shortcuts (Space = Play/Pause, 1-7 = Switch Tool, 0 = Rewind, L = Loop)
   useEffect(() => {
@@ -158,6 +184,18 @@ export function MainLayout({
     return `0${mins}:${secs < 10 ? `0${secs}` : secs}`
   }
 
+  // Dynamic 24 FPS SMPTE Timecode (Bug 5 Fix: live frames advance with playhead)
+  const formatTimecode = (percent: number) => {
+    const totalFrames = Math.floor((percent / 100) * 105 * 24)
+    const frames = totalFrames % 24
+    const totalSecs = Math.floor(totalFrames / 24)
+    const secs = totalSecs % 60
+    const mins = Math.floor(totalSecs / 60) % 60
+    const hours = Math.floor(totalSecs / 3600)
+    const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`)
+    return `${pad(hours)}:${pad(mins)}:${pad(secs)}:${pad(frames)}`
+  }
+
   const monitorBars = [
     22, 40, 65, 50, 82, 95, 72, 58, 90, 100, 76, 62,
     84, 92, 68, 48, 74, 88, 60, 42, 70, 85, 54, 32
@@ -222,16 +260,17 @@ export function MainLayout({
           </div>
 
           <div className="flex items-center gap-2 text-[11px] font-mono">
-            <span className={`px-2.5 py-0.5 rounded-lg border ${
-              isDark ? 'border-white/10 bg-black/40 text-amber-300' : 'border-white/80 bg-white/80 text-indigo-700 font-semibold'
+            <span className={`px-2.5 py-0.5 rounded-lg border tracking-wider font-semibold ${
+              isDark ? 'border-white/10 bg-black/40 text-amber-300' : 'border-white/80 bg-white/80 text-indigo-700'
             }`}>
-              TC {formatTime(playhead)}:00
+              TC {formatTimecode(playhead)}
             </span>
             <button
-              onClick={() => alert('Exporting synced Video + Master Audio Stem...')}
-              className={`px-3.5 py-1 rounded-full bg-gradient-to-r font-sans font-semibold text-xs cursor-pointer hover:brightness-110 transition ${accentGradient}`}
+              onClick={handleExportMix}
+              disabled={isExportingMix}
+              className={`px-3.5 py-1 rounded-full bg-gradient-to-r font-sans font-semibold text-xs cursor-pointer hover:brightness-110 transition flex items-center gap-1.5 ${accentGradient}`}
             >
-              Export Mix
+              {isExportingMix ? 'Rendering WAV...' : exportMixDone ? 'Exported!' : 'Export Mix'}
             </button>
           </div>
         </header>
@@ -381,6 +420,32 @@ export function MainLayout({
                 </span>
               </div>
 
+              {/* AI Video Scene Intelligence Card */}
+              <div className={`p-2.5 rounded-2xl border text-[11px] space-y-1.5 ${
+                isDark ? 'border-orange-500/25 bg-orange-950/20 text-zinc-200' : 'border-indigo-200 bg-indigo-50/70 text-slate-800'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-orange-400" />
+                    AI Scene Intelligence
+                  </span>
+                  <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-orange-400 font-bold">
+                    {videoMotionEnergy > 60 ? 'Action' : videoMotionEnergy < 25 ? 'Ambient' : 'Dramatic'} ({videoMotionEnergy}%)
+                  </span>
+                </div>
+                <div className="text-[10px] opacity-75">
+                  {videoMotionEnergy > 60
+                    ? 'Scene: High Motion • Recommended: Cyberpunk (130 BPM) + Sub-Boom'
+                    : videoMotionEnergy < 25
+                    ? 'Scene: Calm Pacing • Recommended: Ambient Drone (72 BPM) + Warm Pads'
+                    : 'Scene: Building Tension • Recommended: Cinematic Score (90 BPM) + Risers'}
+                </div>
+                <div className="pt-0.5 flex items-center justify-between text-[10px] opacity-70">
+                  <span>Visual Pacing Analysis</span>
+                  <span className="font-mono text-emerald-400 font-semibold">Active</span>
+                </div>
+              </div>
+
               {/* Minor Self-Editing Controls Panel */}
               {showVideoEdits && (
                 <div className={`p-2.5 rounded-2xl border space-y-2 text-[11px] ${
@@ -518,7 +583,8 @@ export function MainLayout({
           <div className="flex items-center gap-2.5 w-36">
             <button
               onClick={() => setIsMasterMuted(!isMasterMuted)}
-              className={`cursor-pointer ${isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
+              title={isMasterMuted ? 'Unmute Audio Engine' : 'Mute Audio Engine'}
+              className={`cursor-pointer transition ${isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
             >
               {isMasterMuted ? <VolumeX className="w-4 h-4 text-red-500" /> : <Volume2 className="w-4 h-4" />}
             </button>
@@ -528,9 +594,11 @@ export function MainLayout({
               max="100"
               value={isMasterMuted ? 0 : masterVolume}
               onChange={(e) => {
-                setMasterVolume(Number(e.target.value))
+                const val = Number(e.target.value)
+                setMasterVolume(val)
                 if (isMasterMuted) setIsMasterMuted(false)
               }}
+              title={`Master Volume: ${masterVolume}%`}
               className={`w-full h-1 cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
             />
           </div>

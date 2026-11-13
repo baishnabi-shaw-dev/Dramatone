@@ -51,9 +51,9 @@ projectsRouter.post('/', async (req, res) => {
     const project = new Project({
       userId,
       title: title || 'Untitled Soundscape',
-      genre: genre || 'Synthwave',
-      mood: mood || 'Euphoric',
-      bpm: bpm || 118,
+      genre: genre || 'Custom',
+      mood: mood || 'Neutral',
+      bpm: bpm || 100,
       tension: tension !== undefined ? tension : 50,
       stems: stems || []
     })

@@ -46,7 +46,24 @@ class ApiClient {
   public logout() {
     this.token = null
     this.currentUser = null
-    localStorage.removeItem('dramatone_user')
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('dramatone_user')
+    }
+  }
+
+  public clearAllData() {
+    this.token = null
+    this.currentUser = null
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('dramatone_user')
+      localStorage.removeItem('dramatone_projects')
+      localStorage.removeItem('dramatone_sidebar_width')
+      localStorage.removeItem('dramatone_gen_takes')
+      localStorage.removeItem('dramatone_gen_prompt')
+      localStorage.removeItem('dramatone_gen_genre')
+      localStorage.removeItem('dramatone_gen_mood')
+      localStorage.removeItem('dramatone_gen_bpm')
+    }
   }
 
   // --- AUTHENTICATION ---
@@ -153,7 +170,7 @@ class ApiClient {
       // Fallback
     }
 
-    // Read from localStorage
+    // Read from localStorage (returns empty array if no saved projects)
     const local = localStorage.getItem('dramatone_projects')
     if (local) {
       try {
@@ -163,41 +180,7 @@ class ApiClient {
       }
     }
 
-    // Default starter templates if empty
-    return [
-      {
-        id: 'proj-01',
-        title: 'Cyberpunk Alley Pursuit',
-        genre: 'Synthwave',
-        mood: 'Suspense',
-        bpm: 118,
-        tension: 68,
-        stems: [
-          { id: 'keys', name: 'Dramatone Keys', volume: 80, muted: false, solo: false },
-          { id: 'drums', name: 'Neural Drums', volume: 90, muted: false, solo: false },
-          { id: 'guitar', name: 'Acoustic Pluck', volume: 65, muted: false, solo: false },
-          { id: 'vocal', name: 'Vocal Texture', volume: 55, muted: false, solo: false }
-        ],
-        createdAt: new Date().toISOString(),
-        syncedToCloud: false
-      },
-      {
-        id: 'proj-02',
-        title: 'Midnight Atmospheric Score',
-        genre: 'Cinematic Score',
-        mood: 'Melancholic',
-        bpm: 84,
-        tension: 32,
-        stems: [
-          { id: 'keys', name: 'Dramatone Keys', volume: 90, muted: false, solo: false },
-          { id: 'drums', name: 'Neural Drums', volume: 30, muted: false, solo: false },
-          { id: 'guitar', name: 'Acoustic Pluck', volume: 70, muted: false, solo: false },
-          { id: 'vocal', name: 'Vocal Texture', volume: 40, muted: false, solo: false }
-        ],
-        createdAt: new Date().toISOString(),
-        syncedToCloud: false
-      }
-    ]
+    return []
   }
 
   public async saveProject(project: Omit<SoundscapeProject, 'id' | 'createdAt' | 'syncedToCloud'>): Promise<SoundscapeProject> {
@@ -237,6 +220,23 @@ class ApiClient {
     localStorage.setItem('dramatone_projects', JSON.stringify(updated))
 
     return newProject
+  }
+
+  public async deleteProject(id: string): Promise<void> {
+    try {
+      if (this.token && !this.token.startsWith('local-token')) {
+        await fetch(`${API_BASE_URL}/projects/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${this.token}` }
+        })
+      }
+    } catch {
+      // Offline fallback
+    }
+
+    const existing = await this.getProjects()
+    const updated = existing.filter((p) => p.id !== id)
+    localStorage.setItem('dramatone_projects', JSON.stringify(updated))
   }
 }
 

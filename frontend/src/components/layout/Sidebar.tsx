@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   LayoutDashboard, Wand2, Sparkles, Activity, Library,
   FolderKanban, Settings, Sun, Moon, PanelLeftClose, PanelLeftOpen,
-  LogOut, User as UserIcon
+  LogOut, User as UserIcon, Piano
 } from 'lucide-react'
 import { apiClient } from '@/services/apiClient'
 
@@ -13,6 +13,7 @@ export type AppRoute =
   | 'login'
   | 'signup'
   | 'dashboard'
+  | 'daw'
   | 'generator'
   | 'soundscape'
   | 'analysis'
@@ -28,7 +29,16 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activePage, isDark, onToggleTheme, onNavigate }: SidebarProps) {
-  const [width, setWidth] = useState(64)
+  const [width, setWidth] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('dramatone_sidebar_width')
+      if (saved) {
+        const val = Number(saved)
+        if (!isNaN(val) && val >= 64) return val
+      }
+    }
+    return 64
+  })
   const [isDragging, setIsDragging] = useState(false)
   const isDraggingRef = useRef(false)
   const currentUser = apiClient.getCurrentUser()
@@ -37,6 +47,7 @@ export function Sidebar({ activePage, isDark, onToggleTheme, onNavigate }: Sideb
 
   const navItems: { id: AppRoute; icon: typeof LayoutDashboard; label: string }[] = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Studio Workspace' },
+    { id: 'daw', icon: Piano, label: 'DAW Piano Roll' },
     { id: 'generator', icon: Wand2, label: 'Music Generator' },
     { id: 'soundscape', icon: Sparkles, label: 'Adaptive Soundscape' },
     { id: 'analysis', icon: Activity, label: 'Audio Analysis' },
@@ -45,9 +56,22 @@ export function Sidebar({ activePage, isDark, onToggleTheme, onNavigate }: Sideb
     { id: 'settings', icon: Settings, label: 'Settings' }
   ]
 
+  // Persist sidebar width to LocalStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('dramatone_sidebar_width', String(width))
+    } catch {
+      // ignore
+    }
+  }, [width])
+
   // Toggle extend / collapse button
   const toggleExtend = () => {
-    setWidth((prev) => (prev > 110 ? 64 : 240))
+    setWidth((prev) => {
+      const next = prev > 110 ? 64 : 240
+      localStorage.setItem('dramatone_sidebar_width', String(next))
+      return next
+    })
   }
 
   // Draggable horizontal resizer with snapping
@@ -74,12 +98,9 @@ export function Sidebar({ activePage, isDark, onToggleTheme, onNavigate }: Sideb
       document.body.style.userSelect = ''
 
       // Dynamic snap threshold: <120px snaps to 64px, >=120px snaps to 240px
-      const finalWidth = e.clientX
-      if (finalWidth < 120) {
-        setWidth(64)
-      } else {
-        setWidth(240)
-      }
+      const finalWidth = e.clientX < 120 ? 64 : 240
+      setWidth(finalWidth)
+      localStorage.setItem('dramatone_sidebar_width', String(finalWidth))
     }
 
     window.addEventListener('mousemove', handleMouseMove)

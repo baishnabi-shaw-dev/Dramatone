@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { Wand2, Sparkles, Sliders, Download } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Wand2, Sparkles, Sliders, Download, Play, Pause, Trash2 } from 'lucide-react'
 import { MainLayout } from '@/components/layout/MainLayout'
 import { AppRoute } from '@/components/layout/Sidebar'
-import { generationService } from '@/features/music-generator/services/generationService'
+import { generationService, GeneratedTake } from '@/features/music-generator/services/generationService'
+import { audioEngine } from '@/services/audioEngine'
 
 interface PageProps {
   isDark: boolean
@@ -11,19 +12,35 @@ interface PageProps {
 }
 
 export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
-  const [prompt, setPrompt] = useState('Lush analog synthwave with warm Rhodes chords and crisp percussion')
-  const [selectedGenre, setSelectedGenre] = useState('Synthwave')
-  const [selectedMood, setSelectedMood] = useState('Euphoric')
-  const [bpm, setBpm] = useState(118)
+  const [prompt, setPrompt] = useState(() => localStorage.getItem('dramatone_gen_prompt') || 'Bright brass trumpet solo with warm accompaniment')
+  const [selectedGenre, setSelectedGenre] = useState(() => localStorage.getItem('dramatone_gen_genre') || 'Brass & Trumpet')
+  const [selectedMood, setSelectedMood] = useState(() => localStorage.getItem('dramatone_gen_mood') || 'Heroic')
+  const [bpm, setBpm] = useState(() => Number(localStorage.getItem('dramatone_gen_bpm')) || 104)
   const [duration, setDuration] = useState(60)
   const [isGenerating, setIsGenerating] = useState(false)
-  const [takes, setTakes] = useState([
-    { id: 1, title: 'Neon Horizon — Take 01', seed: 'SEED-8841', key: 'F Minor', bpm: 118, genre: 'Synthwave', mood: 'Euphoric', bars: [40, 75, 60, 90, 50, 82, 95, 70, 45, 68, 88, 60, 50, 78, 92, 65] },
-    { id: 2, title: 'Neon Horizon — Take 02 (Ambient)', seed: 'SEED-9012', key: 'F Minor', bpm: 95, genre: 'Ambient Drone', mood: 'Dreamy', bars: [25, 45, 70, 65, 55, 80, 72, 60, 40, 52, 68, 75, 58, 44, 62, 50] }
-  ])
+  const [playingTakeId, setPlayingTakeId] = useState<number | null>(null)
+  const [takes, setTakes] = useState<GeneratedTake[]>(() => {
+    try {
+      const saved = localStorage.getItem('dramatone_gen_takes')
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
 
-  const genres = ['Synthwave', 'Lo-Fi Chill', 'Cinematic Score', 'Ambient Drone', 'Deep House', 'Acoustic Folk']
-  const moods = ['Euphoric', 'Melancholic', 'Tense', 'Dreamy', 'Energetic', 'Meditative']
+  // Retain generator state and takes across tab navigation (Bug 3)
+  useEffect(() => {
+    try {
+      localStorage.setItem('dramatone_gen_takes', JSON.stringify(takes))
+      localStorage.setItem('dramatone_gen_prompt', prompt)
+      localStorage.setItem('dramatone_gen_genre', selectedGenre)
+      localStorage.setItem('dramatone_gen_mood', selectedMood)
+      localStorage.setItem('dramatone_gen_bpm', String(bpm))
+    } catch {}
+  }, [takes, prompt, selectedGenre, selectedMood, bpm])
+
+  const genres = ['Eerie & Dark Horror', 'Brass & Trumpet', 'Synthwave', 'Lo-Fi Chill', 'Cinematic Score', 'Ambient Drone', 'Deep House', 'Acoustic Folk']
+  const moods = ['Heroic', 'Euphoric', 'Melancholic', 'Tense', 'Dreamy', 'Energetic', 'Meditative']
 
   const cardClass = isDark ? 'border-white/10 bg-black/45' : 'border-white/75 bg-white/60 shadow-sm'
   const accentText = isDark ? 'text-orange-500' : 'text-indigo-600'
@@ -34,7 +51,37 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
       const newTake = generationService.generateTrack(prompt, selectedGenre, selectedMood, bpm)
       setTakes((prev) => [newTake, ...prev])
       setIsGenerating(false)
+      // Do NOT auto-play without user action (Bug 1 fix)
     }, 400)
+  }
+
+  const handleDeleteTake = (id: number) => {
+    if (playingTakeId === id) {
+      audioEngine.stop()
+      setPlayingTakeId(null)
+    }
+    setTakes((prev) => prev.filter((t) => t.id !== id))
+  }
+
+  const handleClearAllTakes = () => {
+    audioEngine.stop()
+    setPlayingTakeId(null)
+    setTakes([])
+  }
+
+  const handleTogglePlayTake = (take: GeneratedTake) => {
+    if (playingTakeId === take.id) {
+      audioEngine.stop()
+      setPlayingTakeId(null)
+    } else {
+      generationService.auditionTake(take)
+      setPlayingTakeId(take.id)
+    }
+  }
+
+  const handleOpenInDaw = (take: GeneratedTake) => {
+    audioEngine.loadComposition(take.genre, take.mood, take.bpm)
+    onNavigate('dashboard')
   }
 
   return (
@@ -123,10 +170,26 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
               <Sliders className={`w-3.5 h-3.5 ${accentText}`} />
               Generated Takes ({takes.length})
             </span>
+            {takes.length > 0 && (
+              <button
+                onClick={handleClearAllTakes}
+                className="text-[10px] text-red-400 hover:text-red-300 flex items-center gap-1 cursor-pointer transition"
+              >
+                <Trash2 className="w-3 h-3" />
+                Clear All
+              </button>
+            )}
           </div>
 
-          <div className="space-y-3 overflow-y-auto">
-            {takes.map((take) => (
+          <div className="space-y-3 overflow-y-auto flex-1 flex flex-col">
+            {takes.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-8 opacity-60 space-y-2.5 my-auto">
+                <Wand2 className="w-8 h-8 opacity-35" />
+                <div className="text-xs font-semibold">Workspace is a Blank Slate</div>
+                <div className="text-[11px] max-w-xs">No audio takes generated yet. Enter a prompt on the left and click "Generate Track" to synthesize your first stems.</div>
+              </div>
+            ) : (
+              takes.map((take) => (
               <div key={take.id} className={`p-3.5 rounded-2xl border space-y-2.5 ${
                 isDark ? 'border-white/10 bg-zinc-950/60' : 'border-white/85 bg-white/75'
               }`}>
@@ -139,7 +202,18 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
                   </div>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => onNavigate('dashboard')}
+                      onClick={() => handleTogglePlayTake(take)}
+                      title={playingTakeId === take.id ? 'Pause' : 'Audition Take Live'}
+                      className={`w-7 h-7 rounded-full flex items-center justify-center cursor-pointer transition ${
+                        playingTakeId === take.id
+                          ? isDark ? 'bg-amber-400 text-zinc-950' : 'bg-indigo-700 text-white'
+                          : isDark ? 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                      }`}
+                    >
+                      {playingTakeId === take.id ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ml-0.5" />}
+                    </button>
+                    <button
+                      onClick={() => handleOpenInDaw(take)}
                       className={`px-3 py-1 rounded-full border text-[11px] font-medium cursor-pointer ${
                         isDark ? 'bg-orange-500/15 border-orange-500/40 text-orange-500' : 'bg-indigo-500/10 border-indigo-500/30 text-indigo-700'
                       }`}
@@ -154,6 +228,15 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
                       }`}
                     >
                       <Download className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteTake(take.id)}
+                      title="Delete Take"
+                      className={`p-1.5 rounded-full border cursor-pointer transition ${
+                        isDark ? 'border-red-500/30 text-red-400 hover:bg-red-500/20' : 'border-red-200 text-red-600 bg-white hover:bg-red-50'
+                      }`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -170,7 +253,7 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
                   ))}
                 </div>
               </div>
-            ))}
+            )))}
           </div>
         </div>
       </div>

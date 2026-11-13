@@ -13,15 +13,15 @@ const projectSchema = new mongoose.Schema({
   },
   genre: {
     type: String,
-    default: 'Synthwave'
+    default: 'Custom'
   },
   mood: {
     type: String,
-    default: 'Euphoric'
+    default: 'Neutral'
   },
   bpm: {
     type: Number,
-    default: 118
+    default: 100
   },
   tension: {
     type: Number,

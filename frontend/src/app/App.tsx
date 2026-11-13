@@ -6,6 +6,7 @@ import { AboutPage } from '@/pages/AboutPage'
 import { FeaturesPage } from '@/pages/FeaturesPage'
 import { AppRoute } from '@/components/layout/Sidebar'
 import { DashboardPage } from '@/pages/DashboardPage'
+import { DawPage } from '@/pages/DawPage'
 import { MusicGeneratorPage } from '@/pages/MusicGeneratorPage'
 import { AdaptiveSoundscapePage } from '@/pages/AdaptiveSoundscapePage'
 import { AudioAnalysisPage } from '@/pages/AudioAnalysisPage'
@@ -42,10 +43,21 @@ export default function App() {
     60, 45, 70, 85, 60, 40, 25, 15, 30, 45, 20, 10
   ]
 
-  const currentUser = apiClient.getCurrentUser()
+  const [currentUser, setCurrentUser] = useState(() => apiClient.getCurrentUser())
   const protectedRoutes: AppRoute[] = [
-    'dashboard', 'generator', 'soundscape', 'analysis', 'library', 'projects', 'settings'
+    'dashboard', 'daw', 'generator', 'soundscape', 'analysis', 'library', 'projects', 'settings'
   ]
+
+  // Synchronize authenticated user state whenever page changes
+  useEffect(() => {
+    setCurrentUser(apiClient.getCurrentUser())
+  }, [currentPage])
+
+  const handleLogout = () => {
+    apiClient.logout()
+    setCurrentUser(null)
+    setCurrentPage('home')
+  }
 
   // Protected Route Guard: Redirect unauthenticated requests to Login
   if (protectedRoutes.includes(currentPage) && !currentUser) {
@@ -55,12 +67,16 @@ export default function App() {
         onToggleTheme={() => setIsDark(!isDark)}
         onBack={() => setCurrentPage('home')}
         onNavigateToSignUp={() => setCurrentPage('signup')}
-        onSuccess={() => setCurrentPage(currentPage)}
+        onSuccess={() => {
+          setCurrentUser(apiClient.getCurrentUser())
+          setCurrentPage(currentPage)
+        }}
       />
     )
   }
 
   if (currentPage === 'dashboard') return <DashboardPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
+  if (currentPage === 'daw') return <DawPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
   if (currentPage === 'generator') return <MusicGeneratorPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
   if (currentPage === 'soundscape') return <AdaptiveSoundscapePage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
   if (currentPage === 'analysis') return <AudioAnalysisPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
@@ -75,7 +91,10 @@ export default function App() {
         onToggleTheme={() => setIsDark(!isDark)}
         onBack={() => setCurrentPage('home')}
         onNavigateToSignUp={() => setCurrentPage('signup')}
-        onSuccess={() => setCurrentPage('dashboard')}
+        onSuccess={() => {
+          setCurrentUser(apiClient.getCurrentUser())
+          setCurrentPage('dashboard')
+        }}
       />
     )
   }
@@ -87,7 +106,10 @@ export default function App() {
         onToggleTheme={() => setIsDark(!isDark)}
         onBack={() => setCurrentPage('home')}
         onNavigateToLogin={() => setCurrentPage('login')}
-        onSuccess={() => setCurrentPage('dashboard')}
+        onSuccess={() => {
+          setCurrentUser(apiClient.getCurrentUser())
+          setCurrentPage('dashboard')
+        }}
       />
     )
   }
@@ -193,22 +215,22 @@ export default function App() {
           <nav className="hidden md:flex items-center gap-9 text-xs font-medium tracking-wide">
             <button
               onClick={() => setCurrentPage('home')}
-              className={`border-b pb-0.5 transition-colors cursor-pointer ${
+              className={`transition-colors cursor-pointer border-b pb-0.5 font-semibold ${
                 isDark ? 'text-white border-white' : 'text-slate-900 border-indigo-600'
               }`}>
               Home
             </button>
             <button
               onClick={() => setCurrentPage('about')}
-              className={`text-xs font-medium transition cursor-pointer ${
-                isDark ? 'text-zinc-300 hover:text-white' : 'text-slate-700 hover:text-slate-950'
+              className={`transition-colors cursor-pointer ${
+                isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-600 hover:text-slate-950'
               }`}>
               About
             </button>
             <button
               onClick={() => setCurrentPage('features')}
-              className={`text-xs font-medium transition cursor-pointer ${
-                isDark ? 'text-zinc-300 hover:text-white' : 'text-slate-700 hover:text-slate-950'
+              className={`transition-colors cursor-pointer ${
+                isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-600 hover:text-slate-950'
               }`}>
               Features
             </button>
@@ -239,10 +261,7 @@ export default function App() {
                   <span>{currentUser.name.split(' ')[0]}'s Studio</span>
                 </button>
                 <button
-                  onClick={() => {
-                    apiClient.logout()
-                    setCurrentPage('home')
-                  }}
+                  onClick={handleLogout}
                   title="Sign Out"
                   className={`p-2 rounded-full border transition cursor-pointer ${
                     isDark ? 'border-white/15 text-zinc-400 hover:text-white' : 'border-slate-300 text-slate-600'

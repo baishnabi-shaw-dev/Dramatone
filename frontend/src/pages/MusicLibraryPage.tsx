@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, Download, Play, Pause, Disc, ArrowRight, Cloud, Database } from 'lucide-react'
+import { Search, Download, Play, Pause, Disc, ArrowRight, Cloud, Database, Trash2 } from 'lucide-react'
 import { MainLayout } from '@/components/layout/MainLayout'
 import { AppRoute } from '@/components/layout/Sidebar'
 import { apiClient, SoundscapeProject } from '@/services/apiClient'
@@ -25,6 +25,15 @@ export function MusicLibraryPage({ isDark, onToggleTheme, onNavigate }: PageProp
     })
   }, [])
 
+  const handleDeleteTrack = async (id: string) => {
+    if (activePlayingId === id) {
+      audioEngine.stop()
+      setActivePlayingId(null)
+    }
+    await apiClient.deleteProject(id)
+    setProjects((prev) => prev.filter((p) => p.id !== id))
+  }
+
   const filtered = projects.filter((t) =>
     t.title.toLowerCase().includes(query.toLowerCase()) ||
     t.genre.toLowerCase().includes(query.toLowerCase())
@@ -35,8 +44,9 @@ export function MusicLibraryPage({ isDark, onToggleTheme, onNavigate }: PageProp
       audioEngine.stop()
       setActivePlayingId(null)
     } else {
-      audioEngine.setBpm(track.bpm)
+      audioEngine.loadComposition(track.genre, track.mood, track.bpm)
       audioEngine.setTension(track.tension)
+      audioEngine.ensureContext()
       audioEngine.start()
       setActivePlayingId(track.id)
     }
@@ -45,7 +55,7 @@ export function MusicLibraryPage({ isDark, onToggleTheme, onNavigate }: PageProp
   const handleDownloadWav = async (track: SoundscapeProject) => {
     setDownloadingId(track.id)
     try {
-      audioEngine.setBpm(track.bpm)
+      audioEngine.loadComposition(track.genre, track.mood, track.bpm)
       audioEngine.setTension(track.tension)
       const blob = await audioEngine.exportSoundscapeWav(15)
       const url = URL.createObjectURL(blob)
@@ -143,7 +153,7 @@ export function MusicLibraryPage({ isDark, onToggleTheme, onNavigate }: PageProp
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => {
-                          audioEngine.setBpm(track.bpm)
+                          audioEngine.loadComposition(track.genre, track.mood, track.bpm)
                           audioEngine.setTension(track.tension)
                           onNavigate('dashboard')
                         }}
@@ -164,6 +174,16 @@ export function MusicLibraryPage({ isDark, onToggleTheme, onNavigate }: PageProp
                         }`}
                       >
                         <Download className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        onClick={() => handleDeleteTrack(track.id)}
+                        title="Delete Track from Library"
+                        className={`p-2 rounded-xl border cursor-pointer transition ${
+                          isDark ? 'border-red-500/30 text-red-400 hover:bg-red-500/20' : 'border-red-200 text-red-600 bg-white hover:bg-red-50'
+                        }`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>

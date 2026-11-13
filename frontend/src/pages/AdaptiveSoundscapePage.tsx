@@ -29,26 +29,58 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
       audioEngine.stop()
       setIsPlaying(false)
     } else {
-      audioEngine.start()
-      setIsPlaying(true)
+      audioEngine.ensureContext()
+      if (audioEngine.hasComposition()) {
+        audioEngine.start()
+        setIsPlaying(true)
+      }
     }
   }
 
   const handleTensionChange = (newVal: number) => {
     setTension(newVal)
     soundscapeService.setTension(newVal)
-    // Automatically modulate layer percentages to visualize real stem dynamics
-    setLayers({
+    const newLayers = {
       ambience: Math.round(90 - newVal * 0.2),
       strings: Math.round(Math.max(20, newVal * 0.9)),
       subPulse: Math.round(Math.max(10, newVal * 1.1)),
       foley: Math.round(Math.pow(newVal / 100, 1.4) * 100)
-    })
+    }
+    setLayers(newLayers)
+    audioEngine.setStemVolume('keys', newLayers.ambience)
+    audioEngine.setStemVolume('guitar', newLayers.strings)
+    audioEngine.setStemVolume('drums', newLayers.subPulse)
+    audioEngine.setStemVolume('vocal', newLayers.foley)
+  }
+
+  const handleLayerChange = (key: string, val: number) => {
+    setLayers((prev) => ({ ...prev, [key]: val }))
+    if (key === 'ambience') audioEngine.setStemVolume('keys', val)
+    if (key === 'strings') audioEngine.setStemVolume('guitar', val)
+    if (key === 'subPulse') audioEngine.setStemVolume('drums', val)
+    if (key === 'foley') audioEngine.setStemVolume('vocal', val)
+  }
+
+  const handleEmotionSelect = (em: 'Calm' | 'Suspense' | 'Heroic' | 'Melancholy') => {
+    setEmotion(em)
+    if (em === 'Calm') {
+      audioEngine.loadComposition('Ambient Drone', 'Calm', 72)
+      handleTensionChange(20)
+    } else if (em === 'Suspense') {
+      audioEngine.loadComposition('Cyberpunk', 'Suspense', 120)
+      handleTensionChange(65)
+    } else if (em === 'Heroic') {
+      audioEngine.loadComposition('Brass & Trumpet', 'Heroic', 104)
+      handleTensionChange(85)
+    } else if (em === 'Melancholy') {
+      audioEngine.loadComposition('Cinematic Score', 'Dramatic', 84)
+      handleTensionChange(35)
+    }
   }
 
   const handleLoadSample = (name: string, em: 'Calm' | 'Suspense' | 'Heroic' | 'Melancholy', t: number) => {
     setSceneName(name)
-    setEmotion(em)
+    handleEmotionSelect(em)
     handleTensionChange(t)
   }
 
@@ -117,13 +149,7 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
               {(['Calm', 'Suspense', 'Heroic', 'Melancholy'] as const).map((em) => (
                 <button
                   key={em}
-                  onClick={() => {
-                    setEmotion(em)
-                    if (em === 'Calm') handleTensionChange(20)
-                    if (em === 'Suspense') handleTensionChange(65)
-                    if (em === 'Heroic') handleTensionChange(85)
-                    if (em === 'Melancholy') handleTensionChange(35)
-                  }}
+                  onClick={() => handleEmotionSelect(em)}
                   className={`py-2 px-3 rounded-2xl border text-xs font-medium transition cursor-pointer ${
                     emotion === em
                       ? isDark ? 'border-orange-500 bg-orange-500/20 text-orange-500 font-semibold' : 'border-indigo-500 bg-indigo-500/15 text-indigo-700 font-semibold'
@@ -230,7 +256,7 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
                   min="0"
                   max="100"
                   value={val}
-                  onChange={(e) => setLayers((prev) => ({ ...prev, [key]: Number(e.target.value) }))}
+                  onChange={(e) => handleLayerChange(key, Number(e.target.value))}
                   className={`w-full h-1.5 cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
                 />
               </div>
