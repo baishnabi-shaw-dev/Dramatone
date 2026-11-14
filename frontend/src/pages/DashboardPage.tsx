@@ -235,7 +235,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         setSplitNotice(
           arranged.isMock
             ? `🤖 Procedural Score: "${arranged.title}" (${arranged.bpm} BPM • ${arranged.key})`
-            : `⚡ Gemini 1.5 Score: "${arranged.title}" (${arranged.bpm} BPM • ${arranged.key})`
+            : `⚡ Gemini AI Score: "${arranged.title}" (${arranged.bpm} BPM • ${arranged.key})`
         )
         setTimeout(() => setSplitNotice(null), 3500)
       }

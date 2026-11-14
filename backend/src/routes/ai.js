@@ -61,50 +61,60 @@ Format:
   }
 }`
 
-  try {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`
-    const body = {
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: `${systemPrompt}\n\nDirector's Prompt: "${prompt || 'Cinematic Film Score'}"` }]
-        }
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.7
+  const body = {
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: `${systemPrompt}\n\nDirector's Prompt: "${prompt || 'Cinematic Film Score'}"` }]
       }
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      temperature: 0.7
     }
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    })
-
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => ({}))
-      const msg = errBody?.error?.message || response.statusText
-      console.warn('Gemini API Error:', response.status, msg)
-      return res.status(200).json({
-        success: false,
-        geminiConfigured: true,
-        error: `Gemini API ${response.status}: ${msg}`
-      })
-    }
-
-    const data = await response.json()
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text
-    if (!rawText) {
-      return res.status(200).json({ success: false, error: 'Empty response from Gemini' })
-    }
-
-    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
-    const parsed = JSON.parse(cleaned)
-    return res.json({ success: true, arrangement: parsed })
-  } catch (error) {
-    console.error('Error proxying Gemini API:', error)
-    return res.status(200).json({ success: false, error: error.message })
   }
+
+  const candidateModels = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash']
+  let lastError = null
+
+  for (const model of candidateModels) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000)
+      })
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}))
+        const msg = errBody?.error?.message || response.statusText
+        console.warn(`Gemini model ${model} failed (${response.status}):`, msg)
+        lastError = `Gemini API ${response.status}: ${msg}`
+        continue
+      }
+
+      const data = await response.json()
+      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text
+      if (!rawText) {
+        lastError = 'Empty response from Gemini'
+        continue
+      }
+
+      const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
+      const parsed = JSON.parse(cleaned)
+      return res.json({ success: true, arrangement: parsed, model })
+    } catch (err) {
+      console.warn(`Gemini model ${model} error:`, err.message)
+      lastError = err.message
+    }
+  }
+
+  return res.status(200).json({
+    success: false,
+    geminiConfigured: true,
+    error: lastError || 'All Gemini model candidates failed'
+  })
 })
 

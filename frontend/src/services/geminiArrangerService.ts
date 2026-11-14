@@ -242,8 +242,6 @@ Format:
   }
 }`
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`
-
     const body = {
       contents: [
         {
@@ -257,25 +255,40 @@ Format:
       }
     }
 
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    })
+    const candidateModels = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash']
+    let lastError: Error | null = null
 
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => ({}))
-      const msg = errBody?.error?.message || res.statusText
-      throw new Error(`Google API ${res.status}: ${msg}`)
+    for (const model of candidateModels) {
+      try {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(10000)
+        })
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}))
+          const msg = errBody?.error?.message || res.statusText
+          lastError = new Error(`Google API ${res.status}: ${msg}`)
+          continue
+        }
+
+        const data = await res.json()
+        const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text
+        if (!rawText) continue
+
+        const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
+        const parsed = JSON.parse(cleaned)
+        return this.sanitizeParsedArrangement(parsed, prompt)
+      } catch (err: any) {
+        lastError = err
+      }
     }
 
-    const data = await res.json()
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text
-    if (!rawText) return null
-
-    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
-    const parsed = JSON.parse(cleaned)
-    return this.sanitizeParsedArrangement(parsed, prompt)
+    if (lastError) throw lastError
+    return null
   }
 
   // Intelligent Procedural Arranger (Works seamlessly before/without API Key)
