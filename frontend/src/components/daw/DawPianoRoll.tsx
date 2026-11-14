@@ -117,10 +117,11 @@ export function DawPianoRoll({ isDark, className = '', showFullHeader = true }: 
   const selectedInstrumentRef = useRef(selectedInstrument)
   selectedInstrumentRef.current = selectedInstrument
 
-  // Persist notes across tab switching
+  // Persist notes across tab switching & sync to audio engine
   useEffect(() => {
     try {
       localStorage.setItem('dramatone_daw_notes', JSON.stringify(notes))
+      audioEngine.setActiveNotes(notes)
     } catch {}
   }, [notes])
 

@@ -155,6 +155,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         },
         arranged.tension
       )
+      audioEngine.setActiveNotes(arranged.notes)
 
       // 2. Dispatch event to populate DAW Piano Roll with 64-step note blocks
       if (typeof window !== 'undefined') {

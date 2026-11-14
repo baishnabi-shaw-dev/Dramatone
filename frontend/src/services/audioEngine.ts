@@ -231,8 +231,19 @@ class AudioEngine {
   private limiter: DynamicsCompressorNode | null = null
   private analyser: AnalyserNode | null = null
   private rawDawGain: GainNode | null = null
+  private convolver: ConvolverNode | null = null
+  private reverbGain: GainNode | null = null
   private masterVolume = 80
   private isMasterMuted = false
+
+  // Active DAW Sequencer Notes (Synchronized between Piano Roll, AI Arranger & Timeline Sequencer)
+  private activeNotes: Array<{
+    id?: string
+    midi: number
+    step: number
+    duration?: number
+    instrument?: DawInstrument
+  }> = []
 
   // Per-stem Gain Nodes
   private stemGains: Record<StemId, GainNode | null> = {
@@ -301,9 +312,33 @@ class AudioEngine {
       // Connect graph: Stems -> MasterFilter -> DuckingGain -> MasterGain -> Limiter -> Analyser -> Output
       this.masterFilter.connect(this.duckingGain)
       this.duckingGain.connect(this.masterGain)
+
+      // Master Cinematic Hall Reverb Bus (Lush room acoustics & spatial warmth)
+      try {
+        this.convolver = this.ctx.createConvolver()
+        this.convolver.buffer = this.createImpulseResponse(2.2, 2.8)
+        this.reverbGain = this.ctx.createGain()
+        this.reverbGain.gain.setValueAtTime(0.24, this.ctx.currentTime) // 24% warm room reverb
+        this.masterFilter.connect(this.convolver)
+        this.convolver.connect(this.reverbGain)
+        this.reverbGain.connect(this.duckingGain)
+      } catch {
+        // Fallback gracefully if convolver buffer creation is unsupported
+      }
+
       this.masterGain.connect(this.limiter)
       this.limiter.connect(this.analyser)
       this.analyser.connect(this.ctx.destination)
+
+      // Pre-load active notes from localStorage if available
+      if (typeof window !== 'undefined' && this.activeNotes.length === 0) {
+        try {
+          const saved = localStorage.getItem('dramatone_daw_notes')
+          if (saved) {
+            this.activeNotes = JSON.parse(saved)
+          }
+        } catch {}
+      }
 
       // Dedicated Raw DAW Instrument Bus (Bypasses generative stem filters/mutes, routes directly to master limiter)
       this.rawDawGain = this.ctx.createGain()
@@ -357,6 +392,32 @@ class AudioEngine {
     if (this.rawDawGain && this.ctx) {
       this.rawDawGain.gain.setTargetAtTime(Math.max(0, Math.min(1.5, val)), this.ctx.currentTime, 0.02)
     }
+  }
+
+  // Generate synthetic stereo exponential decay impulse response for cinematic hall reverb
+  private createImpulseResponse(duration = 2.0, decay = 2.8): AudioBuffer {
+    if (!this.ctx) throw new Error('AudioContext required')
+    const sampleRate = this.ctx.sampleRate
+    const length = Math.floor(sampleRate * duration)
+    const impulse = this.ctx.createBuffer(2, length, sampleRate)
+    const left = impulse.getChannelData(0)
+    const right = impulse.getChannelData(1)
+    for (let i = 0; i < length; i++) {
+      const t = i / length
+      const env = Math.pow(1 - t, decay)
+      left[i] = (Math.random() * 2 - 1) * env
+      right[i] = (Math.random() * 2 - 1) * env
+    }
+    return impulse
+  }
+
+  // Active DAW Sequencer Notes accessors (Bug 1 Fix: connects timeline sequencer to piano roll)
+  public setActiveNotes(notes: Array<{ id?: string; midi: number; step: number; duration?: number; instrument?: DawInstrument }>) {
+    this.activeNotes = [...notes]
+  }
+
+  public getActiveNotes() {
+    return [...this.activeNotes]
   }
 
   public hasComposition(): boolean {
@@ -645,7 +706,7 @@ class AudioEngine {
     osc.stop(time + 0.14)
   }
 
-  // 4. Polyphonic Pad Chord (Plays full triads/7ths with detuning, scaled for polyphony)
+  // 4. Polyphonic Pad Chord (Plays full triads/7ths with warm harmonic filtering)
   private playPolyChord(chordFreqs: number[], duration: number, time: number) {
     if (!this.ctx || !this.stemGains.keys) return
     const voiceCount = Math.max(1, chordFreqs.length)
@@ -653,19 +714,25 @@ class AudioEngine {
 
     for (const freq of chordFreqs) {
       const osc = this.ctx.createOscillator()
+      const filter = this.ctx.createBiquadFilter()
       const gain = this.ctx.createGain()
 
       osc.type = 'sawtooth'
       osc.frequency.setValueAtTime(freq, time)
-      osc.detune.setValueAtTime((Math.random() - 0.5) * 8, time)
+      osc.detune.setValueAtTime((Math.random() - 0.5) * 10, time)
 
-      const attack = 0.1
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(Math.min(1800, freq * 2.6), time)
+      filter.Q.setValueAtTime(0.707, time)
+
+      const attack = 0.15
       gain.gain.setValueAtTime(0.001, time)
       gain.gain.linearRampToValueAtTime(voiceGain, time + attack)
       gain.gain.setValueAtTime(voiceGain, time + duration - 0.15)
       gain.gain.exponentialRampToValueAtTime(0.001, time + duration)
 
-      osc.connect(gain)
+      osc.connect(filter)
+      filter.connect(gain)
       gain.connect(this.stemGains.keys)
 
       osc.start(time)
@@ -673,20 +740,25 @@ class AudioEngine {
     }
   }
 
-  // 5. Rich Sub-Bass (Drives low-end foundation)
+  // 5. Rich Sub-Bass (Drives warm low-end foundation)
   private playBass(freq: number, time: number, duration: number) {
     if (!this.ctx || !this.stemGains.keys) return
     const osc = this.ctx.createOscillator()
+    const filter = this.ctx.createBiquadFilter()
     const gain = this.ctx.createGain()
 
     osc.type = 'triangle'
     osc.frequency.setValueAtTime(freq, time)
 
+    filter.type = 'lowpass'
+    filter.frequency.setValueAtTime(260, time)
+
     gain.gain.setValueAtTime(0.001, time)
-    gain.gain.linearRampToValueAtTime(0.18, time + 0.02)
+    gain.gain.linearRampToValueAtTime(0.2, time + 0.02)
     gain.gain.exponentialRampToValueAtTime(0.001, time + duration)
 
-    osc.connect(gain)
+    osc.connect(filter)
+    filter.connect(gain)
     gain.connect(this.stemGains.keys)
 
     osc.start(time)
@@ -1007,7 +1079,16 @@ class AudioEngine {
     const freq = this.midiToFreq(midiNote)
     const time = this.ctx.currentTime
     const vel = Math.max(0.1, Math.min(1.0, velocity))
-    const targetGain = this.rawDawGain || this.masterGain
+    let targetGain: GainNode | null = this.rawDawGain || this.masterGain
+    if (instrument === 'keys' || instrument === 'epiano' || instrument === 'strings') {
+      targetGain = this.stemGains.keys || targetGain
+    } else if (instrument === 'percussion') {
+      targetGain = this.stemGains.drums || targetGain
+    } else if (instrument === 'guitar' || instrument === 'trumpet' || instrument === 'flute' || instrument === 'synth') {
+      targetGain = this.stemGains.guitar || targetGain
+    } else if (instrument === 'bass') {
+      targetGain = this.stemGains.keys || targetGain
+    }
     if (!targetGain) return
 
     if (instrument === 'keys') {
@@ -1393,16 +1474,24 @@ class AudioEngine {
       this.playRainFoley(time, stepDuration * 4.2, intensity)
     }
 
+    // 1. Play active notes placed in DAW Piano Roll or arranged by Gemini AI (Fix 1)
+    if (this.activeNotes.length > 0) {
+      const stepNotes = this.activeNotes.filter((n) => n.step === step)
+      stepNotes.forEach((n) => {
+        const inst: DawInstrument = n.instrument || (this.activeProfile.leadInstrument as DawInstrument) || 'keys'
+        const dur = (n.duration || 1) * stepDuration * 0.95
+        this.playMidiNote(n.midi, dur, 0.85, inst)
+      })
+    }
+
     // --- Mode 1: Soaring Trumpet Lead with Brass Chords ---
     if (this.activeProfile.leadInstrument === 'trumpet') {
       if (step % 4 === 0) {
         this.playPolyChord(currentChord, stepDuration * 3.8, time)
         this.playBass(currentBass, time, stepDuration * 3.5)
       }
-      if (step % 2 === 0) {
-        const scaleLen = this.scaleFrequencies.length
-        const noteIdx = (step * 2 + chordIdx * 3) % scaleLen
-        const freq = this.scaleFrequencies[noteIdx]
+      if (this.activeNotes.length === 0 && step % 4 === 2) {
+        const freq = currentChord[(Math.floor(step / 4)) % currentChord.length] * 2
         this.playTrumpet(freq, time, stepDuration * 1.8)
       }
     }
@@ -1419,12 +1508,10 @@ class AudioEngine {
       }
 
       // 3. Staccato Strings Pulse (Building across measures)
-      if (this.hasStaccato && bar >= 1) {
+      if (this.hasStaccato && bar >= 1 && (this.activeNotes.length === 0 || step % 4 === 2)) {
         const shouldPulse = bar === 1 ? (barStep % 2 === 0) : (bar === 2 ? (barStep % 2 === 0 || barStep % 4 === 1) : true)
         if (shouldPulse) {
-          const scaleLen = this.scaleFrequencies.length
-          const noteIdx = (step * 2 + chordIdx * 3) % scaleLen
-          const freq = this.scaleFrequencies[noteIdx]
+          const freq = currentChord[(Math.floor(step / 4)) % currentChord.length] * 2
           this.playCinematicStrings([freq], stepDuration * 1.5, time, true)
         }
       }
@@ -1469,10 +1556,8 @@ class AudioEngine {
         }
       }
 
-      if (effectiveTension > 20 && step % 2 === 0) {
-        const scaleLen = this.scaleFrequencies.length
-        const noteIdx = (step * 2 + chordIdx * 3) % scaleLen
-        const freq = this.scaleFrequencies[noteIdx]
+      if (this.activeNotes.length === 0 && effectiveTension > 20 && step % 4 === 2) {
+        const freq = currentChord[(Math.floor(step / 4)) % currentChord.length] * 2
         this.playPluck(freq, time)
       }
 
