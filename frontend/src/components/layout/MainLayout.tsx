@@ -152,7 +152,8 @@ export function MainLayout({
           }
           return trimStart
         }
-        return prev + 0.5 * playbackRate
+        // Advance 100% across 180 seconds (3 mins) at 100ms intervals = (0.1s / 180s) * 100%
+        return prev + (1 / 18) * playbackRate
       })
     }, 100)
     return () => clearInterval(timer)

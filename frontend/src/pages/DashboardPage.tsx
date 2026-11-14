@@ -88,14 +88,37 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   const [copiedPrompt, setCopiedPrompt] = useState(false)
   const timelineTracksRef = useRef<HTMLDivElement>(null)
 
-  // Real-time Playhead sync with audio transport
+  // Real-time Playhead sync with 3-minute audio transport
   useEffect(() => {
-    const unsub = audioEngine.addStepListener((step) => {
-      if (step >= 0) {
-        setPlayhead((step / 64) * 100)
-      }
+    const unsub = audioEngine.addTimelineListener((percent) => {
+      setPlayhead(percent)
     })
     return () => unsub()
+  }, [])
+
+  // Auto-sync stems if navigating from Adaptive Soundscape or Music Generator
+  useEffect(() => {
+    if (audioEngine.hasComposition()) {
+      const prof = audioEngine.getActiveProfile()
+      if (prof && prof.genre) {
+        setStems((prev) =>
+          prev.map((s) => ({
+            ...s,
+            name:
+              s.id === 'keys'
+                ? (prof.hasStrings ? 'Cinematic Strings / Pad' : 'Harmonic Keys')
+                : s.id === 'drums'
+                ? (prof.hasDrums ? 'Rhythm / Drums' : 'Muted Percussion')
+                : s.id === 'guitar'
+                ? (prof.hasStaccato ? 'Staccato Ostinato' : 'Lead Instrument')
+                : s.id === 'vocal'
+                ? (prof.hasRainFoley ? 'Rain Foley & Texture' : prof.hasSubBass ? 'Sub-Bass Drone' : 'Atmosphere')
+                : s.name,
+            bars: generateStemBars(s.type, audioEngine.getActiveNotes())
+          }))
+        )
+      }
+    }
   }, [])
 
   // Auto-scroll timeline to follow slider/playhead during playback
@@ -120,8 +143,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
     const rect = e.currentTarget.getBoundingClientRect()
     const pct = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100))
     setPlayhead(pct)
-    const targetStep = Math.floor((pct / 100) * 64)
-    audioEngine.seekStep(targetStep)
+    audioEngine.seekTimelinePercent(pct)
   }
 
   const cardClass = isDark ? 'border-white/10 bg-black/45' : 'border-white/75 bg-white/60 shadow-sm'
@@ -199,8 +221,8 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
 
       // 4. Start audio playback from step 0
       audioEngine.stop()
-      audioEngine.seekStep(0)
-      audioEngine.start()
+      audioEngine.seekTimelinePercent(0)
+      audioEngine.start(true)
       setPlayhead(0)
 
       if (!geminiError) {

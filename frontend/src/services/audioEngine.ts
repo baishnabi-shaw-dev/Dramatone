@@ -274,6 +274,9 @@ class AudioEngine {
   private scaleFrequencies = [...GENRE_PROFILES.ambient.scale]
   private onStepCallback: ((step: number) => void) | null = null
   private stepListeners: Set<(step: number) => void> = new Set()
+  private timelineDuration = 180 // 3-minute timeline in seconds
+  private elapsedSeconds = 0
+  private timelineListeners: Set<(percent: number, elapsedSeconds: number) => void> = new Set()
 
   // Initialize Audio Context on user gesture
   public ensureContext(): AudioContext {
@@ -1056,6 +1059,31 @@ class AudioEngine {
     this.stepListeners.delete(cb)
   }
 
+  public addTimelineListener(cb: (percent: number, elapsedSeconds: number) => void): () => void {
+    this.timelineListeners.add(cb)
+    return () => {
+      this.timelineListeners.delete(cb)
+    }
+  }
+
+  public seekTimelinePercent(percent: number) {
+    const clamped = Math.max(0, Math.min(100, percent))
+    this.elapsedSeconds = (clamped / 100) * this.timelineDuration
+    const stepDuration = 60 / this.params.bpm / 4
+    const targetStep = Math.floor(this.elapsedSeconds / stepDuration) % this.maxSteps
+    this.currentStep = targetStep
+    this.timelineListeners.forEach((l) => {
+      try { l(clamped, this.elapsedSeconds) } catch {}
+    })
+    this.stepListeners.forEach((l) => {
+      try { l(this.currentStep) } catch {}
+    })
+  }
+
+  public getTimelinePercent(): number {
+    return (this.elapsedSeconds / this.timelineDuration) * 100
+  }
+
   public seekStep(step: number) {
     this.currentStep = Math.max(0, Math.min(this.maxSteps - 1, step))
     if (this.onStepCallback) this.onStepCallback(this.currentStep)
@@ -1449,6 +1477,15 @@ class AudioEngine {
       try { l(step) } catch {}
     })
 
+    this.elapsedSeconds += stepDuration
+    if (this.elapsedSeconds >= this.timelineDuration) {
+      this.elapsedSeconds = 0
+    }
+    const timelinePct = (this.elapsedSeconds / this.timelineDuration) * 100
+    this.timelineListeners.forEach((l) => {
+      try { l(timelinePct, this.elapsedSeconds) } catch {}
+    })
+
     // Active chord progression: 4 chords across 16 steps (loops across 64 steps)
     const bar = Math.floor(step / 16)
     const barStep = step % 16
@@ -1580,7 +1617,7 @@ class AudioEngine {
   }
 
   // Play / Pause Toggle
-  public start() {
+  public start(resetToZero = false) {
     if (!this.hasActiveComposition) {
       // Complete Silence: No composition has been generated or cued yet!
       return
@@ -1588,7 +1625,10 @@ class AudioEngine {
     this.ensureContext()
     if (this.isPlaying) return
     this.isPlaying = true
-    this.currentStep = 0
+    if (resetToZero) {
+      this.currentStep = 0
+      this.elapsedSeconds = 0
+    }
     this.scheduleStep()
   }
 

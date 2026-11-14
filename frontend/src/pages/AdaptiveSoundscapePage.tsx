@@ -24,17 +24,34 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
     soundscapeService.setTension(tension)
   }, [tension])
 
+  useEffect(() => {
+    if (!audioEngine.hasComposition()) {
+      audioEngine.loadComposition('Cyberpunk', 'Suspense', 120)
+      audioEngine.setTension(tension)
+    }
+  }, [])
+
   const handleTogglePlay = () => {
     if (isPlaying) {
       audioEngine.stop()
       setIsPlaying(false)
     } else {
       audioEngine.ensureContext()
-      if (audioEngine.hasComposition()) {
-        audioEngine.start()
-        setIsPlaying(true)
+      if (!audioEngine.hasComposition()) {
+        audioEngine.loadComposition('Cyberpunk', emotion, 120)
+        audioEngine.setTension(tension)
       }
+      audioEngine.start()
+      setIsPlaying(true)
     }
+  }
+
+  const handleOpenInDaw = () => {
+    audioEngine.ensureContext()
+    const activeProf = audioEngine.getActiveProfile()
+    audioEngine.loadComposition(activeProf.genre || 'Cyberpunk', emotion, activeProf.bpm || 120)
+    audioEngine.setTension(tension)
+    onNavigate('dashboard')
   }
 
   const handleTensionChange = (newVal: number) => {
@@ -174,7 +191,7 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
               <span>{isPlaying ? 'Auditioning Live...' : 'Audition Soundscape'}</span>
             </button>
             <button
-              onClick={() => onNavigate('dashboard')}
+              onClick={handleOpenInDaw}
               className={`px-4 py-2.5 rounded-2xl border text-xs font-medium flex items-center gap-1.5 cursor-pointer ${
                 isDark ? 'border-white/10 bg-white/5 text-zinc-200 hover:text-white' : 'border-white bg-white/80 text-slate-800'
               }`}
