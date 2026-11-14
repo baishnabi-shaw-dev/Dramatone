@@ -510,7 +510,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
                 type="password"
                 value={tempApiKey}
                 onChange={(e) => setTempApiKey(e.target.value)}
-                placeholder="Paste Gemini API Key (e.g. AIzaSy...) or set VITE_GEMINI_API_KEY in frontend/.env"
+                placeholder="Paste Gemini API Key (e.g. AIzaSy...) or set GEMINI_API_KEY in backend/.env"
                 className={`w-full text-xs px-2 py-1 rounded-lg border focus:outline-none font-mono ${isDark ? 'bg-black/60 border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
               />
             </div>

@@ -55,51 +55,138 @@ function noteNameToMidi(note: string): number {
   return (octave + 1) * 12 + idx
 }
 
+const BACKEND_AI_URL = 'http://localhost:5000/api/ai'
+
 class GeminiArrangerService {
-  private apiKey: string = ''
+  private sessionApiKey: string = ''
+  private isBackendKeyActive: boolean = false
 
   constructor() {
-    this.initKey()
+    this.sessionApiKey = typeof window !== 'undefined' ? (localStorage.getItem('dramatone_gemini_api_key') || '').trim() : ''
+    this.checkBackendStatus()
   }
 
-  private initKey() {
-    const envKey = (import.meta.env.VITE_GEMINI_API_KEY || '').trim()
-    const storedKey = typeof window !== 'undefined' ? (localStorage.getItem('dramatone_gemini_api_key') || '').trim() : ''
-    this.apiKey = envKey || storedKey
+  public async checkBackendStatus(): Promise<boolean> {
+    try {
+      const res = await fetch(`${BACKEND_AI_URL}/status`, { signal: AbortSignal.timeout(2000) })
+      if (res.ok) {
+        const data = await res.json()
+        this.isBackendKeyActive = Boolean(data?.geminiConfigured)
+        return this.isBackendKeyActive
+      }
+    } catch {
+      // Backend not running or offline
+    }
+    this.isBackendKeyActive = false
+    return false
   }
 
   public getApiKey(): string {
-    this.initKey()
-    return this.apiKey
+    return this.sessionApiKey
   }
 
   public setApiKey(key: string) {
-    this.apiKey = key.trim()
+    this.sessionApiKey = key.trim()
     if (typeof window !== 'undefined') {
-      localStorage.setItem('dramatone_gemini_api_key', this.apiKey)
+      localStorage.setItem('dramatone_gemini_api_key', this.sessionApiKey)
     }
   }
 
   public hasApiKey(): boolean {
-    return Boolean(this.getApiKey())
+    return this.isBackendKeyActive || Boolean(this.sessionApiKey)
   }
 
   // Primary method to arrange music from any prompt
   public async arrangeMusic(prompt: string): Promise<ArrangedComposition> {
-    const key = this.getApiKey()
+    // 1. Try single backend/.env GEMINI_API_KEY first
+    try {
+      const backendRes = await fetch(`${BACKEND_AI_URL}/arrange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+        signal: AbortSignal.timeout(15000)
+      })
 
-    // 1. If user has provided a Gemini API Key, query Gemini 1.5/2.0 Flash
-    if (key) {
+      if (backendRes.ok) {
+        const data = await backendRes.json()
+        if (data.success && data.arrangement) {
+          return this.sanitizeParsedArrangement(data.arrangement, prompt)
+        }
+      }
+    } catch {
+      // Backend request skipped or offline
+    }
+
+    // 2. If user saved an in-session key, query Gemini directly
+    if (this.sessionApiKey) {
       try {
-        const result = await this.queryGeminiApi(prompt, key)
-        if (result) return result
+        const directResult = await this.queryGeminiApi(prompt, this.sessionApiKey)
+        if (directResult) return directResult
       } catch (err) {
-        console.warn('⚠️ Gemini API call failed, falling back to procedural arranger:', err)
+        console.warn('⚠️ Direct Gemini API call failed:', err)
       }
     }
 
-    // 2. Fallback procedural arranger (works instantly while user generates their API key)
+    // 3. Fallback procedural arranger (works instantly while user adds GEMINI_API_KEY to backend/.env)
     return this.proceduralArranger(prompt)
+  }
+
+  // Helper to format and sanitize JSON from Gemini
+  private sanitizeParsedArrangement(parsed: any, prompt: string): ArrangedComposition {
+    const chords = Array.isArray(parsed.chords) && parsed.chords.length === 4
+      ? parsed.chords
+      : [
+          [146.83, 174.61, 220.0, 261.63],
+          [116.54, 146.83, 174.61, 220.0],
+          [130.81, 164.81, 196.0, 246.94],
+          [110.0, 138.59, 164.81, 220.0]
+        ]
+
+    const scale = Array.isArray(parsed.scale) && parsed.scale.length >= 5
+      ? parsed.scale
+      : [146.83, 164.81, 174.61, 196.0, 220.0, 246.94, 261.63, 293.66]
+
+    const bassFreqs = Array.isArray(parsed.bassFreqs) && parsed.bassFreqs.length === 4
+      ? parsed.bassFreqs
+      : [73.42, 58.27, 65.41, 55.0]
+
+    const notes: NoteStep[] = Array.isArray(parsed.notes)
+      ? parsed.notes.map((n: { midi?: number; step?: number; duration?: number }, i: number) => ({
+          id: `ai-note-${i}`,
+          midi: Math.max(36, Math.min(84, n.midi || 60)),
+          step: Math.max(0, Math.min(63, n.step || 0)),
+          duration: Math.max(1, Math.min(8, n.duration || 1))
+        }))
+      : []
+
+    return {
+      title: parsed.title || 'Gemini Cinematic Arrangement',
+      genre: parsed.genre || 'Cinematic Score',
+      mood: parsed.mood || 'Expressive',
+      bpm: Math.max(50, Math.min(180, parsed.bpm || 80)),
+      key: parsed.key || 'D Minor',
+      tension: Math.max(0, Math.min(100, parsed.tension ?? 40)),
+      leadInstrument: parsed.leadInstrument === 'piano' ? 'keys' : (parsed.leadInstrument || 'keys'),
+      hasStrings: Boolean(parsed.hasStrings),
+      hasRainFoley: Boolean(parsed.hasRainFoley),
+      hasGradualBuild: Boolean(parsed.hasGradualBuild),
+      hasSubBass: Boolean(parsed.hasSubBass),
+      hasStaccato: Boolean(parsed.hasStaccato),
+      diffusionPrompt: parsed.diffusionPrompt || prompt,
+      explanation: parsed.explanation || 'Composed dynamically by Gemini 1.5 Flash.',
+      chords,
+      scale,
+      bassFreqs,
+      notes,
+      stemNames: {
+        keys: parsed.stemNames?.keys || 'Harmonic Keys',
+        drums: parsed.stemNames?.drums || 'Rhythm Track',
+        guitar: parsed.stemNames?.guitar || 'Melodic Voice',
+        vocal: parsed.stemNames?.vocal || 'Atmospheric Texture'
+      },
+      isAiGenerated: true,
+      isMock: false
+    }
   }
 
   // Real Gemini REST API Call
@@ -173,62 +260,7 @@ Format:
     if (!rawText) return null
 
     const parsed = JSON.parse(rawText)
-
-    // Validate and sanitize frequencies & notes
-    const chords = Array.isArray(parsed.chords) && parsed.chords.length === 4
-      ? parsed.chords
-      : [
-          [146.83, 174.61, 220.0, 261.63],
-          [116.54, 146.83, 174.61, 220.0],
-          [130.81, 164.81, 196.0, 246.94],
-          [110.0, 138.59, 164.81, 220.0]
-        ]
-
-    const scale = Array.isArray(parsed.scale) && parsed.scale.length >= 5
-      ? parsed.scale
-      : [146.83, 164.81, 174.61, 196.0, 220.0, 246.94, 261.63, 293.66]
-
-    const bassFreqs = Array.isArray(parsed.bassFreqs) && parsed.bassFreqs.length === 4
-      ? parsed.bassFreqs
-      : [73.42, 58.27, 65.41, 55.0]
-
-    const notes: NoteStep[] = Array.isArray(parsed.notes)
-      ? parsed.notes.map((n: { midi?: number; step?: number; duration?: number }, i: number) => ({
-          id: `ai-note-${i}`,
-          midi: Math.max(36, Math.min(84, n.midi || 60)),
-          step: Math.max(0, Math.min(63, n.step || 0)),
-          duration: Math.max(1, Math.min(8, n.duration || 1))
-        }))
-      : []
-
-    return {
-      title: parsed.title || 'Gemini Cinematic Arrangement',
-      genre: parsed.genre || 'Cinematic Score',
-      mood: parsed.mood || 'Expressive',
-      bpm: Math.max(50, Math.min(180, parsed.bpm || 80)),
-      key: parsed.key || 'D Minor',
-      tension: Math.max(0, Math.min(100, parsed.tension ?? 40)),
-      leadInstrument: parsed.leadInstrument === 'piano' ? 'keys' : (parsed.leadInstrument || 'keys'),
-      hasStrings: Boolean(parsed.hasStrings),
-      hasRainFoley: Boolean(parsed.hasRainFoley),
-      hasGradualBuild: Boolean(parsed.hasGradualBuild),
-      hasSubBass: Boolean(parsed.hasSubBass),
-      hasStaccato: Boolean(parsed.hasStaccato),
-      diffusionPrompt: parsed.diffusionPrompt || prompt,
-      explanation: parsed.explanation || 'Composed dynamically by Gemini 1.5 Flash.',
-      chords,
-      scale,
-      bassFreqs,
-      notes,
-      stemNames: {
-        keys: parsed.stemNames?.keys || 'Harmonic Keys',
-        drums: parsed.stemNames?.drums || 'Rhythm Track',
-        guitar: parsed.stemNames?.guitar || 'Melodic Voice',
-        vocal: parsed.stemNames?.vocal || 'Atmospheric Texture'
-      },
-      isAiGenerated: true,
-      isMock: false
-    }
+    return this.sanitizeParsedArrangement(parsed, prompt)
   }
 
   // Intelligent Procedural Arranger (Works seamlessly before/without API Key)

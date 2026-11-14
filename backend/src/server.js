@@ -4,6 +4,7 @@ import dotenv from 'dotenv'
 import mongoose from 'mongoose'
 import { authRouter } from './routes/auth.js'
 import { projectsRouter } from './routes/projects.js'
+import { aiRouter } from './routes/ai.js'
 
 dotenv.config()
 
@@ -27,6 +28,7 @@ app.get('/api/health', (req, res) => {
 // Mount Routes
 app.use('/api/auth', authRouter)
 app.use('/api/projects', projectsRouter)
+app.use('/api/ai', aiRouter)
 
 // Start Server
 app.listen(PORT, () => {
