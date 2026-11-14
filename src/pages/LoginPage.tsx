@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Lock, Mail, ArrowRight, ArrowLeft, Sun, Moon } from 'lucide-react'
+import logo from '@/assets/icons/favicon.svg'
 
 interface LoginPageProps {
   isDark: boolean
@@ -66,6 +67,7 @@ export function LoginPage({ isDark, onToggleTheme, onBack, onNavigateToSignUp }:
             </button>
 
             <span className={`font-bold text-sm tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+              <img src={logo} alt="Dramatone Studio Logo" className="w-8 h-8 inline-block mr-1" />
               Dramatone <span className={isDark ? 'text-orange-500' : 'text-indigo-600'}>Studio</span>
             </span>
           </div>
