@@ -14,6 +14,7 @@ import { MusicLibraryPage } from '@/pages/MusicLibraryPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { apiClient } from '@/services/apiClient'
+import logo from '@/assets/icons/favicon.svg'
 
 export default function App() {
   const [isPlaying, setIsPlaying] = useState(false)
@@ -204,9 +205,7 @@ export default function App() {
         }`}>
           <div className="flex items-center gap-2.5">
             <div className={`flex items-center gap-1 ${isDark ? 'text-orange-400' : 'text-indigo-600'}`}>
-              <span className="w-1 h-3.5 bg-current rounded-full" />
-              <span className="w-1 h-5 bg-current rounded-full" />
-              <span className="w-1 h-3 bg-current rounded-full" />
+              <img src={logo} alt="Dramatone Studio Logo" className="w-8 h-8" />
             </div>
             <span className={`font-bold text-lg tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
               Dramatone <span className={isDark ? 'text-orange-500' : 'text-indigo-600'}>Studio</span>

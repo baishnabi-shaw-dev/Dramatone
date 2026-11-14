@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Sun, Moon, Cpu, Layers, Radio, Sparkles, ArrowRight, User, LogOut } from 'lucide-react'
 import { AppRoute } from '@/components/layout/Sidebar'
 import { apiClient } from '@/services/apiClient'
+import logo from '@/assets/icons/favicon.svg'
 
 interface AboutPageProps {
   isDark: boolean
@@ -54,9 +55,7 @@ export function AboutPage({ isDark, onToggleTheme, onNavigate }: AboutPageProps)
         }`}>
           <button onClick={() => onNavigate('home')} className="flex items-center gap-2.5 cursor-pointer">
             <div className={`flex items-center gap-1 ${accentText}`}>
-              <span className="w-1 h-3.5 bg-current rounded-full" />
-              <span className="w-1 h-5 bg-current rounded-full" />
-              <span className="w-1 h-3 bg-current rounded-full" />
+              <img src={logo} alt="Dramatone Studio Logo" className="w-8 h-8" />
             </div>
             <span className={`font-bold text-lg tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
               Dramatone <span className={accentText}>Studio</span>
