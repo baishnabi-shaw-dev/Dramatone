@@ -203,40 +203,141 @@ class ApiClient {
   // --- PROJECTS ---
 
   public async getProjects(): Promise<SoundscapeProject[]> {
+    let cloudProjects: SoundscapeProject[] = []
     try {
+      const headers: Record<string, string> = {}
       if (this.token && !this.token.startsWith('local-token')) {
-        const res = await fetch(`${API_BASE_URL}/projects`, {
-          headers: { Authorization: `Bearer ${this.token}` }
-        })
-        if (res.ok) {
-          const data = await res.json()
-          return data.map((p: any) => ({
-            id: p._id || p.id,
-            title: p.title,
-            genre: p.genre,
-            mood: p.mood,
-            bpm: p.bpm,
-            tension: p.tension,
-            stems: p.stems || [],
-            createdAt: p.createdAt || new Date().toISOString(),
-            syncedToCloud: true
-          }))
-        }
+        headers['Authorization'] = `Bearer ${this.token}`
+      }
+      const res = await fetch(`${API_BASE_URL}/projects`, { headers })
+      if (res.ok) {
+        const data = await res.json()
+        cloudProjects = data.map((p: any) => ({
+          id: p._id || p.id,
+          title: p.title,
+          genre: p.genre,
+          mood: p.mood,
+          bpm: p.bpm,
+          tension: p.tension,
+          stems: p.stems || [],
+          createdAt: p.createdAt || new Date().toISOString(),
+          syncedToCloud: true
+        }))
       }
     } catch {
       // Fallback
     }
 
     const local = localStorage.getItem('dramatone_projects')
+    let localProjects: SoundscapeProject[] = []
     if (local) {
       try {
-        return JSON.parse(local)
+        localProjects = JSON.parse(local)
       } catch {
-        return []
+        localProjects = []
       }
     }
 
-    return []
+    // Merge cloud and local projects, deduplicating by id
+    const projectMap = new Map<string, SoundscapeProject>()
+    cloudProjects.forEach((p) => projectMap.set(p.id, p))
+    localProjects.forEach((p) => {
+      if (!projectMap.has(p.id)) projectMap.set(p.id, p)
+    })
+
+    // Automatically incorporate any takes synthesized in the Music Generator
+    if (typeof window !== 'undefined') {
+      try {
+        const genTakesRaw = localStorage.getItem('dramatone_gen_takes')
+        if (genTakesRaw) {
+          const genTakes = JSON.parse(genTakesRaw)
+          if (Array.isArray(genTakes)) {
+            genTakes.forEach((t: any) => {
+              const id = `take-${t.id}`
+              if (!projectMap.has(id) && !projectMap.has(String(t.id))) {
+                projectMap.set(id, {
+                  id,
+                  title: t.title || 'Synthesized Audio Take',
+                  genre: t.genre || 'Cinematic',
+                  mood: t.mood || 'Evocative',
+                  bpm: t.bpm || 110,
+                  tension: 50,
+                  stems: [
+                    { id: 'stem-drums', name: 'Drums & Percussion', volume: 85, muted: false, solo: false },
+                    { id: 'stem-bass', name: 'Bassline', volume: 80, muted: false, solo: false },
+                    { id: 'stem-inst', name: 'Melodic Lead', volume: 90, muted: false, solo: false },
+                    { id: 'stem-vocal', name: 'Atmosphere Stems', volume: 75, muted: false, solo: false }
+                  ],
+                  createdAt: new Date(t.id || Date.now()).toISOString(),
+                  syncedToCloud: false
+                })
+              }
+            })
+          }
+        }
+      } catch {}
+    }
+
+    // Seed starter projects so the workspace is never a blank void
+    if (projectMap.size === 0) {
+      const defaults: SoundscapeProject[] = [
+        {
+          id: 'demo-heroic',
+          title: 'Heroic Brass & Orchestral Fanfare',
+          genre: 'Cinematic Orchestral',
+          mood: 'Heroic',
+          bpm: 112,
+          tension: 70,
+          stems: [
+            { id: 'stem-drums', name: 'Orchestral Timpani', volume: 90, muted: false, solo: false },
+            { id: 'stem-bass', name: 'Contrabass & Celli', volume: 85, muted: false, solo: false },
+            { id: 'stem-inst', name: 'Brass Trumpet Solo', volume: 95, muted: false, solo: false },
+            { id: 'stem-vocal', name: 'Choir & Pad Swells', volume: 80, muted: false, solo: false }
+          ],
+          createdAt: new Date().toISOString(),
+          syncedToCloud: false
+        },
+        {
+          id: 'demo-cyberpunk',
+          title: 'Neon Cyberpunk Dystopia',
+          genre: 'Cyberpunk',
+          mood: 'Suspense',
+          bpm: 124,
+          tension: 80,
+          stems: [
+            { id: 'stem-drums', name: 'Industrial Kick & Snare', volume: 90, muted: false, solo: false },
+            { id: 'stem-bass', name: 'Reese Synth Bass', volume: 95, muted: false, solo: false },
+            { id: 'stem-inst', name: 'Analog Saw Lead', volume: 85, muted: false, solo: false },
+            { id: 'stem-vocal', name: 'Glitch Vocals & FX', volume: 70, muted: false, solo: false }
+          ],
+          createdAt: new Date(Date.now() - 3600000).toISOString(),
+          syncedToCloud: false
+        },
+        {
+          id: 'demo-lofi',
+          title: 'Midnight Lo-Fi Reverie',
+          genre: 'Lo-Fi Chill',
+          mood: 'Chill',
+          bpm: 85,
+          tension: 30,
+          stems: [
+            { id: 'stem-drums', name: 'Dusty Boom-Bap Kit', volume: 80, muted: false, solo: false },
+            { id: 'stem-bass', name: 'Upright Acoustic Bass', volume: 85, muted: false, solo: false },
+            { id: 'stem-inst', name: 'Rhodes Electric Piano', volume: 90, muted: false, solo: false },
+            { id: 'stem-vocal', name: 'Vinyl Crackle & Rain', volume: 75, muted: false, solo: false }
+          ],
+          createdAt: new Date(Date.now() - 7200000).toISOString(),
+          syncedToCloud: false
+        }
+      ]
+      defaults.forEach((d) => projectMap.set(d.id, d))
+    }
+
+    const merged = Array.from(projectMap.values())
+    if (merged.length > 0) {
+      localStorage.setItem('dramatone_projects', JSON.stringify(merged))
+    }
+    return merged
   }
 
   public async saveProject(project: Omit<SoundscapeProject, 'id' | 'createdAt' | 'syncedToCloud'>): Promise<SoundscapeProject> {
@@ -244,20 +345,21 @@ class ApiClient {
     let newId = `local-${Date.now()}`
 
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      }
       if (this.token && !this.token.startsWith('local-token')) {
-        const res = await fetch(`${API_BASE_URL}/projects`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.token}`
-          },
-          body: JSON.stringify(project)
-        })
-        if (res.ok) {
-          const data = await res.json()
-          newId = data._id || data.id
-          savedToCloud = true
-        }
+        headers['Authorization'] = `Bearer ${this.token}`
+      }
+      const res = await fetch(`${API_BASE_URL}/projects`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(project)
+      })
+      if (res.ok) {
+        const data = await res.json()
+        newId = data._id || data.id
+        savedToCloud = true
       }
     } catch {
       savedToCloud = false
@@ -379,6 +481,51 @@ class ApiClient {
     if (res.ok) return await res.json()
     const errData = await res.json().catch(() => ({}))
     throw new Error(errData.error || 'Failed to delete user')
+  }
+
+  // --- ADMIN REMOVAL REQUESTS & SUPER ADMIN APPROVAL ---
+  public async getRemovalRequests(): Promise<any[]> {
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/admin/removal-requests`, {
+        headers: this.token ? { Authorization: `Bearer ${this.token}` } : {}
+      })
+      if (res.ok) return await res.json()
+    } catch {}
+    return []
+  }
+
+  public async submitRemovalRequest(targetUserId: string, reason: string): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/auth/admin/removal-requests`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {})
+      },
+      body: JSON.stringify({ targetUserId, reason })
+    })
+    if (res.ok) return await res.json()
+    const errData = await res.json().catch(() => ({}))
+    throw new Error(errData.error || 'Failed to submit removal request')
+  }
+
+  public async approveRemovalRequest(id: string): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/auth/admin/removal-requests/${id}/approve`, {
+      method: 'POST',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {}
+    })
+    if (res.ok) return await res.json()
+    const errData = await res.json().catch(() => ({}))
+    throw new Error(errData.error || 'Failed to approve removal request')
+  }
+
+  public async rejectRemovalRequest(id: string): Promise<any> {
+    const res = await fetch(`${API_BASE_URL}/auth/admin/removal-requests/${id}/reject`, {
+      method: 'POST',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {}
+    })
+    if (res.ok) return await res.json()
+    const errData = await res.json().catch(() => ({}))
+    throw new Error(errData.error || 'Failed to reject removal request')
   }
 }
 

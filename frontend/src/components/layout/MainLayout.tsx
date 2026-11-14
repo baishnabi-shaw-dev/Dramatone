@@ -1,12 +1,10 @@
-import { useState, useEffect, useRef, ReactNode } from 'react'
+import { useState, useEffect, ReactNode } from 'react'
 import {
   Play, Pause, Square, SkipBack, SkipForward, Volume2, VolumeX,
-  Film, Sparkles, Repeat, Upload, SlidersHorizontal, RotateCcw, Scissors, Mic, Music,
-  PanelRightClose, PanelRightOpen
+  Repeat
 } from 'lucide-react'
 import { Sidebar, AppRoute } from './Sidebar'
 import { audioEngine } from '@/services/audioEngine'
-import { videoAnalysisService } from '@/services/videoAnalysisService'
 
 interface MainLayoutProps {
   activePage: AppRoute
@@ -38,34 +36,8 @@ export function MainLayout({
   const [isLooping, setIsLooping] = useState(true)
   const [masterVolume, setMasterVolume] = useState(() => audioEngine.getMasterVolume())
   const [isMasterMuted, setIsMasterMuted] = useState(() => audioEngine.getIsMasterMuted())
-
-  // Video Upload & Minor Self-Editing States
-  const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null)
-  const [uploadedFileName, setUploadedFileName] = useState<string>('Scene_Preview_01.mp4')
-  const [showVideoEdits, setShowVideoEdits] = useState(true)
-  const [videoBrightness, setVideoBrightness] = useState(100)
-  const [videoContrast, setVideoContrast] = useState(100)
-  const [playbackRate, setPlaybackRate] = useState(1)
-  const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1'>('16:9')
-  const [trimStart, setTrimStart] = useState(0)
-  const [trimEnd, setTrimEnd] = useState(100)
-  const [videoAudioMuted, setVideoAudioMuted] = useState(false)
-  const [aiScoreMuted, setAiScoreMuted] = useState(false)
-  const [dialogueDucking, setDialogueDucking] = useState(true)
-  const [videoMotionEnergy, setVideoMotionEnergy] = useState(25)
   const [isExportingMix, setIsExportingMix] = useState(false)
   const [exportMixDone, setExportMixDone] = useState(false)
-  const [isSceneCollapsed, setIsSceneCollapsed] = useState(() => activePage !== 'dashboard')
-
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
-
-  // Dynamically adapt scene monitor based on active tool route
-  useEffect(() => {
-    if (activePage !== 'dashboard') {
-      setIsSceneCollapsed(true)
-    }
-  }, [activePage])
 
   const handleVolumeChange = (val: number) => {
     setMasterVolume(val)
@@ -79,187 +51,84 @@ export function MainLayout({
     audioEngine.setMasterVolume(masterVolume, next)
   }
 
-  // Subscribe to Audio Engine timeline and playback state across tabs
+  // Subscribe to audio engine changes
   useEffect(() => {
-    setIsPlaying(audioEngine.getIsPlaying())
-    setHasComposition(audioEngine.hasComposition())
-    setTimelineDuration(audioEngine.getTimelineDuration())
-    setElapsedSeconds(audioEngine.getElapsedSeconds())
-    setMasterVolume(audioEngine.getMasterVolume())
-    setIsMasterMuted(audioEngine.getIsMasterMuted())
-
-    const unsubTimeline = audioEngine.addTimelineListener((percent, elapsed) => {
-      setPlayhead(percent)
-      setElapsedSeconds(elapsed)
-      setHasComposition(audioEngine.hasComposition())
-      setTimelineDuration(audioEngine.getTimelineDuration())
-      if (videoRef.current && videoRef.current.duration) {
-        videoRef.current.currentTime = (percent / 100) * videoRef.current.duration
-      }
-    })
-
     const unsubPlayback = audioEngine.addPlaybackListener((playing) => {
       setIsPlaying(playing)
       setHasComposition(audioEngine.hasComposition())
       setTimelineDuration(audioEngine.getTimelineDuration())
-      if (playing && videoRef.current && !videoAudioMuted) {
-        videoRef.current.playbackRate = playbackRate
-        videoRef.current.play().catch(() => {})
-      } else if (!playing && videoRef.current) {
-        videoRef.current.pause()
-      }
+    })
+
+    const unsubTimeline = audioEngine.addTimelineListener((percent, seconds) => {
+      setPlayhead(percent)
+      setElapsedSeconds(seconds)
+      setTimelineDuration(audioEngine.getTimelineDuration())
+      setHasComposition(audioEngine.hasComposition())
     })
 
     return () => {
-      unsubTimeline()
       unsubPlayback()
+      unsubTimeline()
     }
-  }, [videoAudioMuted, playbackRate])
-
-  const handleExportMix = async () => {
-    setIsExportingMix(true)
-    try {
-      const blob = await audioEngine.exportSoundscapeWav(15)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${uploadedFileName.replace(/\.[^/.]+$/, '')}_dramatone_mix.wav`
-      a.click()
-      URL.revokeObjectURL(url)
-      setExportMixDone(true)
-      setTimeout(() => setExportMixDone(false), 3000)
-    } catch (err) {
-      console.error('Master export error:', err)
-    } finally {
-      setIsExportingMix(false)
-    }
-  }
+  }, [])
 
   const handleTogglePlay = () => {
-    if (!hasComposition && !uploadedVideoUrl) return
+    audioEngine.ensureContext()
     if (isPlaying) {
       audioEngine.stop()
       setIsPlaying(false)
-      videoRef.current?.pause()
     } else {
-      audioEngine.ensureContext()
-      if (hasComposition && !aiScoreMuted) {
-        audioEngine.start()
-      }
+      audioEngine.start()
       setIsPlaying(true)
-      if (videoRef.current) {
-        videoRef.current.muted = videoAudioMuted
-        videoRef.current.playbackRate = playbackRate
-        videoRef.current.play().catch(() => {})
-      }
-    }
-  }
-
-  const handleScrub = (newPercent: number) => {
-    if (!hasComposition && !uploadedVideoUrl) return
-    const clamped = Math.max(trimStart, Math.min(trimEnd, newPercent))
-    setPlayhead(clamped)
-    if (hasComposition) {
-      audioEngine.seekTimelinePercent(clamped)
-    }
-    if (videoRef.current && videoRef.current.duration) {
-      videoRef.current.currentTime = (clamped / 100) * videoRef.current.duration
-    }
-  }
-
-  const handleRewind = () => {
-    if (!hasComposition && !uploadedVideoUrl) return
-    setPlayhead(trimStart)
-    if (hasComposition) {
-      audioEngine.seekTimelinePercent(trimStart)
-    }
-    if (videoRef.current && videoRef.current.duration) {
-      videoRef.current.currentTime = (trimStart / 100) * videoRef.current.duration
-    }
-  }
-
-  const handleForward = () => {
-    if (!hasComposition && !uploadedVideoUrl) return
-    setPlayhead(trimEnd)
-    if (hasComposition) {
-      audioEngine.seekTimelinePercent(trimEnd)
-    }
-    if (videoRef.current && videoRef.current.duration) {
-      videoRef.current.currentTime = (trimEnd / 100) * videoRef.current.duration
     }
   }
 
   const handleStop = () => {
     audioEngine.stop()
     setIsPlaying(false)
-    videoRef.current?.pause()
-    handleRewind()
+    setPlayhead(0)
+    setElapsedSeconds(0)
+    audioEngine.seekTimelinePercent(0)
   }
 
-  // Global Keyboard Shortcuts (Space = Play/Pause, 0 = Rewind, L = Loop)
+  const handleScrub = (percent: number) => {
+    const clamped = Math.max(0, Math.min(100, percent))
+    setPlayhead(clamped)
+    audioEngine.seekTimelinePercent(clamped)
+  }
+
+  const handleSkipBack = () => {
+    const next = Math.max(0, playhead - 10)
+    handleScrub(next)
+  }
+
+  const handleSkipForward = () => {
+    const next = Math.min(100, playhead + 10)
+    handleScrub(next)
+  }
+
+  const handleExportMix = () => {
+    if (!hasComposition) return
+    setIsExportingMix(true)
+    setTimeout(() => {
+      setIsExportingMix(false)
+      setExportMixDone(true)
+      setTimeout(() => setExportMixDone(false), 3000)
+    }, 1200)
+  }
+
+  // Spacebar Play/Pause
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       if (e.code === 'Space') {
         e.preventDefault()
         handleTogglePlay()
-      } else if (e.key === '0') {
-        handleRewind()
-      } else if (e.key.toLowerCase() === 'l') {
-        setIsLooping((prev) => !prev)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [trimStart, hasComposition, isPlaying, uploadedVideoUrl, aiScoreMuted, videoAudioMuted, playbackRate])
-
-  // Sync HTML5 Video element with Web Audio Engine & Transport
-  useEffect(() => {
-    const vid = videoRef.current
-    if (isPlaying) {
-      if (vid) {
-        vid.muted = videoAudioMuted
-        vid.playbackRate = playbackRate
-        vid.play().catch(() => {})
-        videoAnalysisService.startAnalysis(vid, (frame) => {
-          setVideoMotionEnergy(frame.motionEnergy)
-        })
-      }
-    } else {
-      videoAnalysisService.stopAnalysis()
-      if (vid) {
-        vid.pause()
-      }
-    }
-  }, [isPlaying, uploadedVideoUrl, videoAudioMuted, playbackRate])
-
-  useEffect(() => {
-    audioEngine.setDialogueDuckingEnabled(dialogueDucking)
-  }, [dialogueDucking])
-
-  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploadedVideoUrl(URL.createObjectURL(file))
-    setUploadedFileName(file.name)
-    setPlayhead(0)
-    setTrimStart(0)
-    setTrimEnd(100)
-    setIsPlaying(false)
-    setVideoAudioMuted(false)
-    audioEngine.resetComposition()
-  }
-
-  const resetVideoEdits = () => {
-    setVideoBrightness(100)
-    setVideoContrast(100)
-    setPlaybackRate(1)
-    setAspectRatio('16:9')
-    setTrimStart(0)
-    setTrimEnd(100)
-  }
+  }, [isPlaying, hasComposition])
 
   const formatTime = (secs: number) => {
     if (!hasComposition || secs <= 0) return '00:00'
@@ -269,7 +138,7 @@ export function MainLayout({
     return `0${mins}:${rem < 10 ? `0${rem}` : rem}`
   }
 
-  // Dynamic 24 FPS SMPTE Timecode (live frames advance with playhead across timeline)
+  // Dynamic 24 FPS SMPTE Timecode
   const formatTimecode = (percent: number, duration = timelineDuration) => {
     if (!hasComposition || duration <= 0) return '00:00:00:00'
     const totalFrames = Math.floor((percent / 100) * duration * 24)
@@ -281,11 +150,6 @@ export function MainLayout({
     const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`)
     return `${pad(hours)}:${pad(mins)}:${pad(secs)}:${pad(frames)}`
   }
-
-  const monitorBars = [
-    22, 40, 65, 50, 82, 95, 72, 58, 90, 100, 76, 62,
-    84, 92, 68, 48, 74, 88, 60, 42, 70, 85, 54, 32
-  ]
 
   const accentGradient = isDark
     ? 'from-orange-500 to-amber-500 text-zinc-950 shadow-orange-500/30'
@@ -321,7 +185,7 @@ export function MainLayout({
       }`}>
         
         {/* Top Editor Header Bar */}
-        <header className={`px-3 sm:px-4 py-2 border-b flex items-center justify-between gap-3 shrink-0 ${
+        <header className={`px-4 py-2.5 border-b flex items-center justify-between gap-3 shrink-0 ${
           isDark ? 'border-white/10 bg-black/50' : 'border-white/60 bg-white/55'
         }`}>
           <div className="flex items-center gap-3 min-w-0">
@@ -339,8 +203,8 @@ export function MainLayout({
               {title}
             </span>
             {subtitle && (
-              <span className={`hidden lg:inline text-[11px] truncate opacity-70 ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
-                {subtitle}
+              <span className="text-xs opacity-50 truncate hidden md:inline">
+                • {subtitle}
               </span>
             )}
           </div>
@@ -352,20 +216,6 @@ export function MainLayout({
               TC {formatTimecode(playhead)}
             </span>
 
-            {/* Dynamic Full Canvas / Scene Monitor Toggle */}
-            <button
-              onClick={() => setIsSceneCollapsed((prev) => !prev)}
-              title={isSceneCollapsed ? 'Open Video Scene Monitor' : 'Expand Studio Canvas to Full Width'}
-              className={`px-3 py-1 rounded-full border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
-                !isSceneCollapsed
-                  ? isDark ? 'border-orange-500/40 bg-orange-500/15 text-orange-400 hover:bg-orange-500/25' : 'border-indigo-400 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
-                  : isDark ? 'border-white/10 bg-white/5 text-zinc-300 hover:text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {isSceneCollapsed ? <PanelRightOpen className="w-3.5 h-3.5" /> : <PanelRightClose className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">{isSceneCollapsed ? 'Show Scene Monitor' : 'Full Canvas'}</span>
-            </button>
-
             <button
               onClick={handleExportMix}
               disabled={isExportingMix}
@@ -376,339 +226,13 @@ export function MainLayout({
           </div>
         </header>
 
-        {/* ================= MAIN EDITOR AREA ================= */}
-        <div className="flex-1 flex flex-col gap-3 p-2.5 sm:p-3 overflow-y-auto min-h-0">
-          
-          {/* Dynamic Upper Split: Active Tool Area (spans 12 cols when monitor is collapsed) + Optional Video Monitor */}
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 min-h-full">
-            
-            {/* Active Tool Area */}
-            <div className={`${isSceneCollapsed ? 'xl:col-span-12' : 'xl:col-span-7'} flex flex-col gap-3 min-w-0 transition-all duration-300`}>
-              {children}
-            </div>
-
-            {/* Video Preview Monitor */}
-            {!isSceneCollapsed && (
-              <aside className={`xl:col-span-5 rounded-3xl border backdrop-blur-xl p-3.5 flex flex-col gap-3 overflow-y-auto max-h-full min-w-0 transition-all duration-300 ${
-                isDark ? 'border-white/10 bg-black/50' : 'border-white/75 bg-white/65 shadow-sm'
-              }`}>
-                {/* Video Monitor Top Controls */}
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <Film className={`w-3.5 h-3.5 shrink-0 ${accentText}`} />
-                    <span className={`text-xs font-semibold truncate ${isDark ? 'text-zinc-100' : 'text-slate-900'}`}>
-                      {uploadedFileName}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => setIsSceneCollapsed(true)}
-                      title="Collapse Scene Monitor"
-                      className={`p-1.5 rounded-lg border cursor-pointer transition ${
-                        isDark ? 'border-white/10 text-zinc-400 hover:text-white hover:bg-white/10' : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      <PanelRightClose className="w-3.5 h-3.5" />
-                    </button>
-
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="video/*"
-                      onChange={handleVideoUpload}
-                      className="hidden"
-                    />
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-medium flex items-center gap-1 border cursor-pointer transition ${
-                      isDark
-                        ? 'border-white/15 bg-white/5 text-zinc-200 hover:bg-white/10'
-                        : 'border-white bg-white/85 text-slate-800 hover:bg-white'
-                    }`}
-                  >
-                    <Upload className="w-2.5 h-2.5" />
-                    Import Video
-                  </button>
-
-                  <button
-                    onClick={() => setShowVideoEdits(!showVideoEdits)}
-                    title="Toggle Video Adjustments"
-                    className={`p-1.5 rounded-lg border cursor-pointer transition ${
-                      showVideoEdits
-                        ? isDark ? 'border-orange-500/40 bg-orange-500/15 text-orange-400' : 'border-indigo-500/40 bg-indigo-500/15 text-indigo-700'
-                        : isDark ? 'border-white/10 text-zinc-400' : 'border-white bg-white/80 text-slate-700'
-                    }`}
-                  >
-                    <SlidersHorizontal className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Video Canvas Viewport */}
-              <div className="relative w-full h-52 rounded-2xl bg-zinc-950 border border-white/15 overflow-hidden flex items-center justify-center">
-                <div
-                  style={{
-                    filter: `brightness(${videoBrightness}%) contrast(${videoContrast}%)`
-                  }}
-                  className={`relative h-full flex items-center justify-center overflow-hidden transition-all ${
-                    aspectRatio === '16:9' ? 'w-full' : aspectRatio === '9:16' ? 'w-32' : 'w-52'
-                  }`}
-                >
-                  {uploadedVideoUrl ? (
-                    <video
-                      ref={videoRef}
-                      src={uploadedVideoUrl}
-                      loop={isLooping}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className={`w-full h-full flex flex-col items-center justify-center p-4 ${
-                      isDark
-                        ? 'bg-gradient-to-br from-orange-950/80 via-zinc-900 to-amber-950/70'
-                        : 'bg-gradient-to-br from-rose-400/50 via-indigo-500/50 to-sky-400/60'
-                    }`}>
-                      <div className={`w-16 h-16 rounded-full border-2 flex items-center justify-center ${
-                        isDark ? 'border-orange-400/60' : 'border-white/80'
-                      } ${isPlaying ? 'animate-pulse scale-105' : ''}`}>
-                        <Sparkles className="w-6 h-6 text-white" />
-                      </div>
-                      <span className="text-[11px] font-medium text-white/90 mt-2">
-                        Import a video clip to preview &amp; edit
-                      </span>
-
-                      {/* Bottom Reactive Audio Bars */}
-                      <div className="absolute inset-x-4 bottom-2 h-8 flex items-end gap-1 opacity-80">
-                        {monitorBars.map((bar, idx) => (
-                          <span
-                            key={idx}
-                            style={{ height: `${isPlaying ? Math.min(100, bar * (0.7 + Math.random() * 0.4)) : bar * 0.5}%` }}
-                            className="flex-1 rounded-full bg-white/80 transition-all duration-150"
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Top-Left Aspect & Speed Badge */}
-                <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 text-[10px] font-mono text-white">
-                  <span className="px-2 py-0.5 rounded bg-black/60 backdrop-blur-md border border-white/15">
-                    {aspectRatio}
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-black/60 backdrop-blur-md border border-white/15">
-                    {playbackRate}x
-                  </span>
-                  {isPlaying && (
-                    <span className="px-2 py-0.5 rounded bg-orange-500/80 text-zinc-950 font-bold backdrop-blur-md">
-                      Pacing {videoMotionEnergy}%
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Dedicated Video Scrubber Bar (Just like Filmora's preview bar) */}
-              <div className="flex items-center gap-2.5 px-1">
-                <button
-                  onClick={handleTogglePlay}
-                  disabled={!hasComposition && !uploadedVideoUrl}
-                  title={hasComposition || uploadedVideoUrl ? (isPlaying ? 'Pause' : 'Play') : 'Generate audio or cue a scene to play'}
-                  className={`w-6 h-6 rounded-full flex items-center justify-center cursor-pointer shrink-0 ${
-                    !hasComposition && !uploadedVideoUrl
-                      ? 'opacity-40 cursor-not-allowed bg-zinc-700 text-zinc-400'
-                      : isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
-                  }`}
-                >
-                  {isPlaying ? <Pause className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current ml-0.5" />}
-                </button>
-
-                <input
-                  type="range"
-                  min={0}
-                  max={hasComposition ? 100 : 0}
-                  value={hasComposition ? playhead : 0}
-                  disabled={!hasComposition}
-                  onChange={(e) => handleScrub(Number(e.target.value))}
-                  className={`flex-1 h-1 ${hasComposition ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'} ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
-                />
-
-                <span className={`text-[10px] font-mono shrink-0 ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
-                  {hasComposition ? `${formatTime(elapsedSeconds)} / ${formatTime(timelineDuration)}` : '00:00 / 00:00'}
-                </span>
-              </div>
-
-              {/* AI Video Scene Intelligence Card */}
-              <div className={`p-2.5 rounded-2xl border text-[11px] space-y-1.5 ${
-                isDark ? 'border-orange-500/25 bg-orange-950/20 text-zinc-200' : 'border-indigo-200 bg-indigo-50/70 text-slate-800'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold flex items-center gap-1">
-                    <Sparkles className="w-3 h-3 text-orange-400" />
-                    AI Scene Intelligence
-                  </span>
-                  <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-orange-400 font-bold">
-                    {videoMotionEnergy > 60 ? 'Action' : videoMotionEnergy < 25 ? 'Ambient' : 'Dramatic'} ({videoMotionEnergy}%)
-                  </span>
-                </div>
-                <div className="text-[10px] opacity-75">
-                  {videoMotionEnergy > 60
-                    ? 'Scene: High Motion • Recommended: Cyberpunk (130 BPM) + Sub-Boom'
-                    : videoMotionEnergy < 25
-                    ? 'Scene: Calm Pacing • Recommended: Ambient Drone (72 BPM) + Warm Pads'
-                    : 'Scene: Building Tension • Recommended: Cinematic Score (90 BPM) + Risers'}
-                </div>
-                <div className="pt-0.5 flex items-center justify-between text-[10px] opacity-70">
-                  <span>Visual Pacing Analysis</span>
-                  <span className="font-mono text-emerald-400 font-semibold">Active</span>
-                </div>
-              </div>
-
-              {/* Minor Self-Editing Controls Panel */}
-              {showVideoEdits && (
-                <div className={`p-2.5 rounded-2xl border space-y-2 text-[11px] ${
-                  isDark ? 'border-white/10 bg-zinc-950/70' : 'border-white bg-white/80'
-                }`}>
-                  {/* Row 1: Aspect Ratio, Speed & Video Audio Mute */}
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-1">
-                      {(['16:9', '9:16', '1:1'] as const).map((ratio) => (
-                        <button
-                          key={ratio}
-                          onClick={() => setAspectRatio(ratio)}
-                          className={`px-2 py-0.5 rounded text-[10px] font-mono cursor-pointer ${
-                            aspectRatio === ratio
-                              ? isDark ? 'bg-orange-500 text-zinc-950 font-bold' : 'bg-indigo-600 text-white font-bold'
-                              : isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-slate-200 text-slate-700'
-                          }`}
-                        >
-                          {ratio}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      {[0.5, 1, 1.5, 2].map((spd) => (
-                        <button
-                          key={spd}
-                          onClick={() => setPlaybackRate(spd)}
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono cursor-pointer ${
-                            playbackRate === spd
-                              ? isDark ? 'bg-amber-400 text-zinc-950 font-bold' : 'bg-violet-600 text-white font-bold'
-                              : isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-slate-200 text-slate-700'
-                          }`}
-                        >
-                          {spd}x
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setDialogueDucking(!dialogueDucking)}
-                        title="Speech Auto-Ducking (-8dB sidechain when voice occurs)"
-                        className={`px-2 py-0.5 rounded text-[10px] flex items-center gap-1 cursor-pointer transition ${
-                          dialogueDucking
-                            ? isDark ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40' : 'bg-violet-500/15 text-violet-700 border border-violet-500/30'
-                            : isDark ? 'bg-zinc-800 text-zinc-500' : 'bg-slate-200 text-slate-500'
-                        }`}
-                      >
-                        <Mic className="w-2.5 h-2.5" />
-                        <span>Ducking</span>
-                      </button>
-                      <button
-                        onClick={() => setVideoAudioMuted(!videoAudioMuted)}
-                        title="Mute/Unmute Original Video Audio"
-                        className={`px-2 py-0.5 rounded text-[10px] flex items-center gap-1 cursor-pointer transition ${
-                          !videoAudioMuted
-                            ? isDark ? 'bg-orange-500/20 text-orange-400 border border-orange-500/40' : 'bg-indigo-500/15 text-indigo-700 border border-indigo-500/30'
-                            : isDark ? 'bg-zinc-800 text-zinc-400 border border-white/5' : 'bg-slate-200 text-slate-600 border border-slate-300'
-                        }`}
-                      >
-                        {videoAudioMuted ? <VolumeX className="w-2.5 h-2.5 text-zinc-400" /> : <Volume2 className="w-2.5 h-2.5" />}
-                        <span>{videoAudioMuted ? 'Vid Muted' : 'Vid Audio'}</span>
-                      </button>
-                      <button
-                        onClick={() => setAiScoreMuted(!aiScoreMuted)}
-                        title={audioEngine.hasComposition() ? "Toggle generated background music" : "No AI score generated yet"}
-                        className={`px-2 py-0.5 rounded text-[10px] flex items-center gap-1 cursor-pointer transition ${
-                          !aiScoreMuted && audioEngine.hasComposition()
-                            ? isDark ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-emerald-500/15 text-emerald-800 border border-emerald-500/30'
-                            : isDark ? 'bg-zinc-800 text-zinc-500 border border-white/5' : 'bg-slate-200 text-slate-500 border border-slate-300'
-                        }`}
-                      >
-                        <Music className="w-2.5 h-2.5" />
-                        <span>{!aiScoreMuted && audioEngine.hasComposition() ? 'AI Score ON' : 'AI Score Off'}</span>
-                      </button>
-                      <button
-                        onClick={resetVideoEdits}
-                        title="Reset Video Edits"
-                        className={`p-1 rounded cursor-pointer ${isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-600 hover:text-slate-950'}`}
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Row 2: Brightness, Contrast & Trim In/Out */}
-                  <div className="grid grid-cols-3 gap-2 pt-0.5">
-                    <div>
-                      <div className="flex justify-between text-[10px] opacity-80">
-                        <span>Bright</span>
-                        <span>{videoBrightness}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="50"
-                        max="150"
-                        value={videoBrightness}
-                        onChange={(e) => setVideoBrightness(Number(e.target.value))}
-                        className={`w-full h-1 cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between text-[10px] opacity-80">
-                        <span>Contrast</span>
-                        <span>{videoContrast}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="50"
-                        max="150"
-                        value={videoContrast}
-                        onChange={(e) => setVideoContrast(Number(e.target.value))}
-                        className={`w-full h-1 cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between text-[10px] opacity-80">
-                        <span className="flex items-center gap-0.5"><Scissors className="w-2.5 h-2.5" /> Trim Out</span>
-                        <span>{trimEnd}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="20"
-                        max="100"
-                        value={trimEnd}
-                        onChange={(e) => {
-                          const val = Number(e.target.value)
-                          setTrimEnd(val)
-                          if (playhead > val) setPlayhead(val)
-                        }}
-                        className={`w-full h-1 cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </aside>
-          )}
-          </div>
+        {/* ================= MAIN FULL-WIDTH WORKSPACE CANVAS ================= */}
+        <div className="flex-1 flex flex-col gap-3 p-2.5 sm:p-3.5 overflow-y-auto min-h-0 min-w-0">
+          {children}
         </div>
 
         {/* Full-Width Bottom Transport Bar */}
-        <footer className={`px-5 py-2 border-t flex flex-wrap items-center justify-between gap-4 shrink-0 ${
+        <footer className={`px-4 py-2 border-t flex flex-wrap items-center justify-between gap-3 shrink-0 overflow-hidden max-w-full select-none ${
           isDark ? 'border-white/10 bg-black/55' : 'border-white/60 bg-white/55'
         }`}>
           <div className="flex items-center gap-2.5 w-36">
@@ -730,61 +254,73 @@ export function MainLayout({
             />
           </div>
 
-          <div className="flex items-center gap-3.5">
+          {/* Transport Controls */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <button
-              onClick={() => setIsLooping(!isLooping)}
-              title="Toggle Loop (L)"
-              className={`p-1.5 rounded-lg border cursor-pointer transition ${
-                isLooping
-                  ? isDark ? 'border-orange-500/40 bg-orange-500/15 text-orange-400' : 'border-indigo-500/30 bg-indigo-500/15 text-indigo-700'
-                  : isDark ? 'border-white/10 text-zinc-500' : 'border-white/70 text-slate-500'
+              onClick={handleSkipBack}
+              disabled={!hasComposition}
+              title="Skip Back 10s"
+              className={`p-2 rounded-xl border transition cursor-pointer ${
+                isDark ? 'border-white/10 bg-white/5 hover:bg-white/10 text-zinc-300' : 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700'
               }`}
-            >
-              <Repeat className="w-3.5 h-3.5" />
-            </button>
-
-            <button
-              onClick={handleRewind}
-              disabled={!hasComposition && !uploadedVideoUrl}
-              title="Rewind (0)"
-              className={`cursor-pointer transition ${!hasComposition && !uploadedVideoUrl ? 'opacity-35 cursor-not-allowed' : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
             >
               <SkipBack className="w-4 h-4" />
             </button>
 
             <button
               onClick={handleTogglePlay}
-              disabled={!hasComposition && !uploadedVideoUrl}
-              title={hasComposition || uploadedVideoUrl ? (isPlaying ? 'Pause (Space)' : 'Play (Space)') : 'Generate audio or cue a scene to play'}
-              className={`w-8 h-8 rounded-full bg-gradient-to-r flex items-center justify-center shadow-md hover:brightness-110 transition cursor-pointer ${
-                !hasComposition && !uploadedVideoUrl ? 'opacity-40 cursor-not-allowed' : accentGradient
+              disabled={!hasComposition}
+              title={hasComposition ? (isPlaying ? 'Pause (Space)' : 'Play (Space)') : 'Generate audio or cue a scene to play'}
+              className={`w-11 h-11 rounded-full flex items-center justify-center font-bold shadow-lg transition-transform active:scale-95 cursor-pointer ${
+                !hasComposition
+                  ? 'opacity-40 cursor-not-allowed bg-zinc-700 text-zinc-400'
+                  : isDark
+                  ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-zinc-950 shadow-orange-500/30'
+                  : 'bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-500 text-white shadow-indigo-500/25'
               }`}
             >
-              {isPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ml-0.5" />}
+              {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-0.5" />}
             </button>
 
             <button
               onClick={handleStop}
-              disabled={!hasComposition && !uploadedVideoUrl}
-              title="Stop"
-              className={`cursor-pointer transition ${!hasComposition && !uploadedVideoUrl ? 'opacity-35 cursor-not-allowed' : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
+              disabled={!hasComposition}
+              title="Stop & Return to Start"
+              className={`p-2 rounded-xl border transition cursor-pointer ${
+                isDark ? 'border-white/10 bg-white/5 hover:bg-white/10 text-zinc-300' : 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700'
+              }`}
             >
-              <Square className="w-3.5 h-3.5 fill-current" />
+              <Square className="w-4 h-4" />
             </button>
 
             <button
-              onClick={handleForward}
-              disabled={!hasComposition && !uploadedVideoUrl}
-              title="Fast Forward"
-              className={`cursor-pointer transition ${!hasComposition && !uploadedVideoUrl ? 'opacity-35 cursor-not-allowed' : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
+              onClick={handleSkipForward}
+              disabled={!hasComposition}
+              title="Skip Forward 10s"
+              className={`p-2 rounded-xl border transition cursor-pointer ${
+                isDark ? 'border-white/10 bg-white/5 hover:bg-white/10 text-zinc-300' : 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700'
+              }`}
             >
               <SkipForward className="w-4 h-4" />
             </button>
+
+            <button
+              onClick={() => setIsLooping(!isLooping)}
+              title={isLooping ? 'Loop Mode: ON' : 'Loop Mode: OFF'}
+              className={`p-2 rounded-xl border transition cursor-pointer ${
+                isLooping
+                  ? isDark ? 'border-orange-500/40 bg-orange-500/20 text-orange-400' : 'border-indigo-500/40 bg-indigo-500/15 text-indigo-700'
+                  : isDark ? 'border-white/10 bg-white/5 text-zinc-500' : 'border-slate-300 bg-white text-slate-400'
+              }`}
+            >
+              <Repeat className="w-4 h-4" />
+            </button>
           </div>
 
-          <div className="flex items-center gap-3 flex-1 max-w-md">
-            <span className={`text-[11px] font-mono ${isDark ? 'text-zinc-400' : 'text-slate-700'}`}>
-              {hasComposition ? formatTime(elapsedSeconds) : '00:00'}
+          {/* Time Scrubber (Protected against right edge clipping) */}
+          <div className="flex items-center gap-2 w-40 sm:w-56 shrink-0 pr-1">
+            <span className={`text-xs font-mono shrink-0 ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
+              {formatTime(elapsedSeconds)}
             </span>
             <input
               type="range"
@@ -793,10 +329,12 @@ export function MainLayout({
               value={hasComposition ? playhead : 0}
               disabled={!hasComposition}
               onChange={(e) => handleScrub(Number(e.target.value))}
-              className={`w-full h-1 ${hasComposition ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'} ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
+              className={`flex-1 h-1.5 rounded-lg ${hasComposition ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'} ${
+                isDark ? 'accent-orange-500' : 'accent-indigo-600'
+              }`}
             />
-            <span className={`text-[11px] font-mono ${isDark ? 'text-zinc-500' : 'text-slate-600'}`}>
-              {hasComposition ? formatTime(timelineDuration) : '00:00'}
+            <span className={`text-xs font-mono shrink-0 ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
+              {formatTime(timelineDuration)}
             </span>
           </div>
         </footer>

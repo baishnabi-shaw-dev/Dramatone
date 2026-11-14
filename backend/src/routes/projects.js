@@ -1,4 +1,5 @@
 import express from 'express'
+import mongoose from 'mongoose'
 import { Project } from '../models/Project.js'
 import { authenticateToken } from '../middleware/auth.js'
 
@@ -14,15 +15,21 @@ projectsRouter.get('/', async (req, res) => {
     if (token) {
       try {
         const decoded = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-        if (decoded?.id) {
-          query = { userId: decoded.id }
+        if (decoded?.id && mongoose.Types.ObjectId.isValid(decoded.id)) {
+          query = {
+            $or: [
+              { userId: decoded.id },
+              { userId: null },
+              { userId: { $exists: false } }
+            ]
+          }
         }
       } catch {
         // Continue with default
       }
     }
 
-    const projects = await Project.find(query).sort({ createdAt: -1 }).limit(20)
+    const projects = await Project.find(query).sort({ createdAt: -1 }).limit(30)
     res.json(projects)
   } catch (err) {
     console.error('Fetch projects error:', err)
@@ -42,7 +49,9 @@ projectsRouter.post('/', async (req, res) => {
     if (token) {
       try {
         const decoded = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString())
-        userId = decoded?.id || null
+        if (decoded?.id && mongoose.Types.ObjectId.isValid(decoded.id)) {
+          userId = decoded.id
+        }
       } catch {
         // Optional user
       }

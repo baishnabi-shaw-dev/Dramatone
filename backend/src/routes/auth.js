@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import nodemailer from 'nodemailer'
 import { User } from '../models/User.js'
+import { AdminRemovalRequest } from '../models/AdminRemovalRequest.js'
 
 export const authRouter = express.Router()
 const JWT_SECRET = process.env.JWT_SECRET || 'dramatone_hackathon_super_secret_jwt_key_2026'
@@ -652,7 +653,13 @@ authRouter.get('/mailing-list', requireAdmin, async (req, res) => {
 // Protected Admin: Get all users
 authRouter.get('/admin/users', requireAdmin, async (req, res) => {
   try {
-    const users = await User.find().select('name email role status createdAt marketingSubscribed').sort({ createdAt: -1 })
+    const defaultEmail = (process.env.DEFAULT_USER || 'lund69633@gmail.com').toLowerCase()
+    const rawUsers = await User.find().select('name email role status createdAt marketingSubscribed').sort({ createdAt: -1 })
+    const users = rawUsers.map((u) => {
+      const obj = u.toObject ? u.toObject() : { ...u }
+      obj.isSuperAdmin = obj.email.toLowerCase() === defaultEmail
+      return obj
+    })
     res.json(users)
   } catch (err) {
     console.error('Admin get users error:', err)
@@ -660,7 +667,7 @@ authRouter.get('/admin/users', requireAdmin, async (req, res) => {
   }
 })
 
-// Protected Admin: Update user status or role (Allows making other users super users/admins)
+// Protected Admin: Update user status or role (Nobody gets super admin rather than Dramatone Super Admin)
 authRouter.patch('/admin/users/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params
@@ -669,11 +676,11 @@ authRouter.patch('/admin/users/:id', requireAdmin, async (req, res) => {
     const targetUser = await User.findById(id)
     if (!targetUser) return res.status(404).json({ error: 'User not found' })
 
-    const defaultEmail = (process.env.DEFAULT_USER || 'admin@dramatone.ai').toLowerCase()
+    const defaultEmail = (process.env.DEFAULT_USER || 'lund69633@gmail.com').toLowerCase()
 
-    // Prevent demoting the primary Super Admin
-    if (targetUser.email.toLowerCase() === defaultEmail && role && role !== 'admin') {
-      return res.status(403).json({ error: 'The primary Dramatone Super Admin account cannot be demoted.' })
+    // Prevent modifying the permanent Dramatone Super Admin
+    if (targetUser.email.toLowerCase() === defaultEmail) {
+      return res.status(403).json({ error: 'The Dramatone Super Admin account is permanently protected and cannot be modified.' })
     }
 
     const updates = {}
@@ -688,23 +695,37 @@ authRouter.patch('/admin/users/:id', requireAdmin, async (req, res) => {
   }
 })
 
-// Protected Admin: Delete user (Super User CANNOT delete itself or be deleted)
+// Protected Admin: Delete user
+// Rules:
+// 1. Dramatone Super Admin can NEVER be deleted.
+// 2. An admin cannot delete their own active account.
+// 3. A secondary admin CANNOT directly delete another admin — they must submit an admin removal request with a reason for Super Admin approval.
+// 4. Dramatone Super Admin can directly delete any regular user or admin.
 authRouter.delete('/admin/users/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params
     const targetUser = await User.findById(id)
     if (!targetUser) return res.status(404).json({ error: 'User not found' })
 
-    const defaultEmail = (process.env.DEFAULT_USER || 'admin@dramatone.ai').toLowerCase()
+    const defaultEmail = (process.env.DEFAULT_USER || 'lund69633@gmail.com').toLowerCase()
+    const callerEmail = (req.user?.email || '').toLowerCase()
 
-    // Bug 2 fix: Primary Super User cannot be deleted by anyone
+    // Permanent Super Admin protection
     if (targetUser.email.toLowerCase() === defaultEmail) {
-      return res.status(403).json({ error: 'The Dramatone Super Admin account is protected and cannot be deleted.' })
+      return res.status(403).json({ error: 'The Dramatone Super Admin account is permanently protected and cannot be deleted.' })
     }
 
-    // Bug 2 fix: Logged-in admin cannot delete their own account
-    if (req.user && req.user.email && req.user.email.toLowerCase() === targetUser.email.toLowerCase()) {
+    // Caller cannot delete their own account
+    if (callerEmail === targetUser.email.toLowerCase()) {
       return res.status(403).json({ error: 'You cannot delete your own active administrator account.' })
+    }
+
+    // Secondary Admin cannot delete another Admin directly
+    if (targetUser.role === 'admin' && callerEmail !== defaultEmail) {
+      return res.status(403).json({
+        error: 'Only the Dramatone Super Admin can delete an administrator directly. Please submit an Admin Removal Request with a reason for approval.',
+        requiresApproval: true
+      })
     }
 
     const deletedUser = await User.findByIdAndDelete(id)
@@ -712,5 +733,138 @@ authRouter.delete('/admin/users/:id', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Admin delete user error:', err)
     res.status(500).json({ error: 'Failed to delete user' })
+  }
+})
+
+// Protected Admin: Submit Removal Request for another Admin (Requires proper reason)
+authRouter.post('/admin/removal-requests', requireAdmin, async (req, res) => {
+  try {
+    const { targetUserId, reason } = req.body
+    if (!targetUserId || !reason || reason.trim().length < 8) {
+      return res.status(400).json({ error: 'A valid target admin and detailed removal reason (minimum 8 characters) are required.' })
+    }
+
+    const defaultEmail = (process.env.DEFAULT_USER || 'lund69633@gmail.com').toLowerCase()
+    const callerEmail = (req.user?.email || '').toLowerCase()
+
+    const targetUser = await User.findById(targetUserId)
+    if (!targetUser) return res.status(404).json({ error: 'Target administrator not found.' })
+
+    if (targetUser.email.toLowerCase() === defaultEmail) {
+      return res.status(403).json({ error: 'The Dramatone Super Admin cannot be removed or targeted for removal.' })
+    }
+
+    if (callerEmail === targetUser.email.toLowerCase()) {
+      return res.status(400).json({ error: 'You cannot request removal of your own account.' })
+    }
+
+    if (targetUser.role !== 'admin') {
+      return res.status(400).json({ error: 'Target user is not an administrator. Non-admin users can be managed directly.' })
+    }
+
+    // Check if pending request already exists
+    const existing = await AdminRemovalRequest.findOne({ targetUserId, status: 'pending' })
+    if (existing) {
+      return res.status(409).json({ error: 'A pending removal request for this administrator is already awaiting Super Admin review.' })
+    }
+
+    const callerUser = await User.findOne({ email: callerEmail })
+    const request = new AdminRemovalRequest({
+      targetUserId: targetUser._id,
+      targetEmail: targetUser.email,
+      targetName: targetUser.name,
+      requestedByEmail: callerEmail,
+      requestedByName: callerUser?.name || 'Administrator',
+      reason: reason.trim(),
+      status: 'pending'
+    })
+
+    await request.save()
+    res.json({
+      success: true,
+      message: `Admin removal request for ${targetUser.email} submitted successfully for Dramatone Super Admin approval.`,
+      request
+    })
+  } catch (err) {
+    console.error('Submit admin removal request error:', err)
+    res.status(500).json({ error: 'Failed to submit removal request' })
+  }
+})
+
+// Protected Admin: Get all removal requests (Pending & Resolved)
+authRouter.get('/admin/removal-requests', requireAdmin, async (req, res) => {
+  try {
+    const requests = await AdminRemovalRequest.find().sort({ createdAt: -1 })
+    res.json(requests)
+  } catch (err) {
+    console.error('Get removal requests error:', err)
+    res.status(500).json({ error: 'Failed to fetch removal requests' })
+  }
+})
+
+// Protected Admin: Approve Removal Request (Strictly Dramatone Super Admin Only)
+authRouter.post('/admin/removal-requests/:id/approve', requireAdmin, async (req, res) => {
+  try {
+    const defaultEmail = (process.env.DEFAULT_USER || 'lund69633@gmail.com').toLowerCase()
+    const callerEmail = (req.user?.email || '').toLowerCase()
+
+    if (callerEmail !== defaultEmail) {
+      return res.status(403).json({ error: 'Access denied: Only the permanent Dramatone Super Admin can approve administrator removals.' })
+    }
+
+    const { id } = req.params
+    const request = await AdminRemovalRequest.findById(id)
+    if (!request) return res.status(404).json({ error: 'Removal request not found.' })
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: `This removal request has already been ${request.status}.` })
+    }
+
+    // Permanently delete target administrator
+    await User.findByIdAndDelete(request.targetUserId)
+
+    request.status = 'approved'
+    request.resolvedAt = new Date()
+    await request.save()
+
+    res.json({
+      success: true,
+      message: `Removal request approved. Administrator ${request.targetEmail} has been deleted from Dramatone.`,
+      request
+    })
+  } catch (err) {
+    console.error('Approve removal request error:', err)
+    res.status(500).json({ error: 'Failed to approve removal request' })
+  }
+})
+
+// Protected Admin: Reject Removal Request (Strictly Dramatone Super Admin Only)
+authRouter.post('/admin/removal-requests/:id/reject', requireAdmin, async (req, res) => {
+  try {
+    const defaultEmail = (process.env.DEFAULT_USER || 'lund69633@gmail.com').toLowerCase()
+    const callerEmail = (req.user?.email || '').toLowerCase()
+
+    if (callerEmail !== defaultEmail) {
+      return res.status(403).json({ error: 'Access denied: Only the permanent Dramatone Super Admin can reject administrator removals.' })
+    }
+
+    const { id } = req.params
+    const request = await AdminRemovalRequest.findById(id)
+    if (!request) return res.status(404).json({ error: 'Removal request not found.' })
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: `This removal request has already been ${request.status}.` })
+    }
+
+    request.status = 'rejected'
+    request.resolvedAt = new Date()
+    await request.save()
+
+    res.json({
+      success: true,
+      message: `Removal request for administrator ${request.targetEmail} rejected.`,
+      request
+    })
+  } catch (err) {
+    console.error('Reject removal request error:', err)
+    res.status(500).json({ error: 'Failed to reject removal request' })
   }
 })

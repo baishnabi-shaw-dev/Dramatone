@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  LayoutDashboard, Wand2, Sparkles, Activity, Library,
+  LayoutDashboard, Wand2,
   FolderKanban, Settings, Sun, Moon, PanelLeftClose, PanelLeftOpen,
-  LogOut, User as UserIcon, Piano
+  LogOut, User as UserIcon, Piano, Clapperboard
 } from 'lucide-react'
 import { apiClient } from '@/services/apiClient'
 
@@ -13,9 +13,9 @@ export type AppRoute =
   | 'login'
   | 'signup'
   | 'dashboard'
+  | 'scene'
   | 'daw'
   | 'generator'
-  | 'soundscape'
   | 'analysis'
   | 'library'
   | 'projects'
@@ -47,12 +47,10 @@ export function Sidebar({ activePage, isDark, onToggleTheme, onNavigate }: Sideb
 
   const navItems: { id: AppRoute; icon: typeof LayoutDashboard; label: string }[] = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Studio Workspace' },
-    { id: 'daw', icon: Piano, label: 'DAW Roll & MIDI Studio' },
+    { id: 'scene', icon: Clapperboard, label: 'Scene Intelligence' },
     { id: 'generator', icon: Wand2, label: 'Music Generator' },
-    { id: 'soundscape', icon: Sparkles, label: 'Adaptive Soundscape' },
-    { id: 'analysis', icon: Activity, label: 'Audio Analysis' },
-    { id: 'library', icon: Library, label: 'Music Library' },
-    { id: 'projects', icon: FolderKanban, label: 'Projects' },
+    { id: 'daw', icon: Piano, label: 'FL Studio DAW' },
+    { id: 'projects', icon: FolderKanban, label: 'Projects & Library' },
     { id: 'settings', icon: Settings, label: 'Settings' }
   ]
 

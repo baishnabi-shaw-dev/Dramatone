@@ -1,5 +1,6 @@
 // Dramatone In-House Web Audio Procedural Synthesis & Adaptive Engine
 // Zero cloud quotas, <5% CPU footprint, 0ms parameter latency
+import { microtonalVocalService } from './microtonalVocalService'
 
 export type StemId = 'keys' | 'drums' | 'guitar' | 'vocal'
 
@@ -316,10 +317,16 @@ class AudioEngine {
     }
   }
 
-  private notifyPlayback(isPlaying: boolean) {
+  public notifyPlayback(isPlaying: boolean) {
+    this.isPlaying = isPlaying
     this.playbackListeners.forEach((l) => {
       try { l(isPlaying) } catch {}
     })
+  }
+
+  public syncMediaProgress(percent: number, elapsed: number) {
+    this.elapsedSeconds = elapsed
+    this.notifyTimeline(percent, elapsed)
   }
 
   private notifyTimeline(percent: number, elapsed: number) {
@@ -502,8 +509,19 @@ class AudioEngine {
     return [...this.activeNotes]
   }
 
+  private hasMediaTrack = false
+
+  public setHasMediaTrack(val: boolean) {
+    this.hasMediaTrack = val
+    if (val) this.hasActiveComposition = true
+  }
+
+  public getHasMediaTrack(): boolean {
+    return this.hasMediaTrack
+  }
+
   public hasComposition(): boolean {
-    return this.hasActiveComposition
+    return this.hasActiveComposition || this.hasMediaTrack
   }
 
   public resetComposition() {
@@ -607,15 +625,40 @@ class AudioEngine {
 
     switch (stemId) {
       case 'keys':
-        return userVol * (0.9 - tension * 0.15)
+        // High keys presence in quiet underscore, balanced presence in climax
+        return userVol * (this.params.tension < 30 ? 1.0 : Math.max(0.7, 0.9 - tension * 0.15))
       case 'drums':
-        return userVol * Math.max(0.15, Math.min(1.0, tension * 1.2))
+        // Dynamic Stem Shift: Quiet Underscore drops drums; Climax opens full power
+        if (this.params.tension < 30) return userVol * 0.12
+        if (this.params.tension <= 65) return userVol * (0.35 + tension * 0.45)
+        return userVol * Math.min(1.0, 0.65 + tension * 0.35)
       case 'guitar':
-        return userVol * Math.max(0.25, tension * 0.95)
+        if (this.params.tension < 30) return userVol * 0.28
+        if (this.params.tension <= 65) return userVol * (0.45 + tension * 0.4)
+        return userVol * Math.min(1.0, 0.7 + tension * 0.3)
       case 'vocal':
-        return userVol * Math.pow(tension, 1.3)
+        if (this.params.tension < 30) return userVol * 0.35
+        if (this.params.tension <= 65) return userVol * (0.55 + tension * 0.35)
+        return userVol * Math.min(1.0, 0.85 + tension * 0.15)
       default:
         return userVol
+    }
+  }
+
+  // Active stem arrangement shift mode derived from tension
+  public getStemArrangementMode(): 'underscore' | 'build' | 'climax' {
+    if (this.params.tension < 30) return 'underscore'
+    if (this.params.tension <= 65) return 'build'
+    return 'climax'
+  }
+
+  // Trigger instantaneous cinematic transition impact on video scene cut
+  public triggerSceneCutTransition() {
+    if (!this.ctx) return
+    const now = this.ctx.currentTime
+    this.playSubImpact(now)
+    if (this.noiseBuffer && this.stemGains.vocal) {
+      this.playTensionRiser(now, 0.35)
     }
   }
 
@@ -1952,6 +1995,31 @@ class AudioEngine {
       }
     }
 
+    // AI Microtonal Vocal Harmony Layer (synthesized on Vocal stem every 8 steps)
+    if (
+      !this.isDawSolo &&
+      this.ctx &&
+      this.stemGains.vocal &&
+      !this.stems.vocal.muted &&
+      this.stems.vocal.volume > 0 &&
+      microtonalVocalService.getConfig().isActive &&
+      barStep % 8 === 0
+    ) {
+      const root = currentChord[0] || 220
+      const chordDur = stepDuration * 7.6
+      microtonalVocalService.playMicrotonalHarmony(
+        this.ctx,
+        this.stemGains.vocal,
+        root,
+        time,
+        chordDur,
+        undefined,
+        undefined,
+        undefined,
+        0.75
+      )
+    }
+
     this.currentStep = (this.currentStep + 1) % this.maxSteps
 
     this.stepTimer = window.setTimeout(() => {
@@ -1961,8 +2029,9 @@ class AudioEngine {
 
   // Play / Pause Toggle
   public start(resetToZero = false) {
-    if (!this.hasActiveComposition) {
-      // Complete Silence: No composition has been generated or cued yet!
+    if ((!this.hasActiveComposition || this.activeNotes.length === 0) && !this.hasMediaTrack) {
+      // Complete Silence: No notes placed and no media track loaded! Stop the playhead.
+      this.stop()
       return
     }
     this.ensureContext()

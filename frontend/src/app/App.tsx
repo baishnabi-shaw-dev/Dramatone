@@ -8,7 +8,7 @@ import { AppRoute } from '@/components/layout/Sidebar'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { DawPage } from '@/pages/DawPage'
 import { MusicGeneratorPage } from '@/pages/MusicGeneratorPage'
-import { AdaptiveSoundscapePage } from '@/pages/AdaptiveSoundscapePage'
+import { SceneAnalyzerPage } from '@/pages/SceneAnalyzerPage'
 import { AudioAnalysisPage } from '@/pages/AudioAnalysisPage'
 import { MusicLibraryPage } from '@/pages/MusicLibraryPage'
 import { ProjectsPage } from '@/pages/ProjectsPage'
@@ -45,7 +45,7 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState(() => apiClient.getCurrentUser())
   const protectedRoutes: AppRoute[] = [
-    'dashboard', 'daw', 'generator', 'soundscape', 'analysis', 'library', 'projects', 'settings'
+    'dashboard', 'scene', 'daw', 'generator', 'analysis', 'library', 'projects', 'settings'
   ]
 
   // Synchronize authenticated user state whenever page changes
@@ -76,9 +76,10 @@ export default function App() {
   }
 
   if (currentPage === 'dashboard') return <DashboardPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
+  if (currentPage === 'scene') return <SceneAnalyzerPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
   if (currentPage === 'daw') return <DawPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
   if (currentPage === 'generator') return <MusicGeneratorPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
-  if (currentPage === 'soundscape') return <AdaptiveSoundscapePage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
+  if (currentPage === ('soundscape' as any)) return <DashboardPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
   if (currentPage === 'analysis') return <AudioAnalysisPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
   if (currentPage === 'library') return <MusicLibraryPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
   if (currentPage === 'projects') return <ProjectsPage isDark={isDark} onToggleTheme={() => setIsDark(!isDark)} onNavigate={setCurrentPage} />
@@ -159,9 +160,9 @@ export default function App() {
         <div className={`w-64 h-64 rounded-full border-[8px] ${isDark ? 'border-fuchsia-400/20' : 'border-rose-300/35'}`} />
       </div>
 
-      {/* Floating 3D Glowing Music Notes */}
-      <div className={`absolute -bottom-6 right-6 md:right-16 pointer-events-none z-20 animate-float-reverse ${
-        isDark ? 'text-orange-500/80 drop-shadow-[0_15px_30px_rgba(249,115,22,0.6)]' : 'text-indigo-500/75 drop-shadow-[0_15px_30px_rgba(99,102,241,0.35)]'
+      {/* Ambient 3D Glowing Music Notes (soft background element, hidden on small screens to prevent clipping) */}
+      <div className={`absolute bottom-20 right-6 md:right-20 pointer-events-none z-0 hidden lg:block opacity-40 animate-float-reverse ${
+        isDark ? 'text-orange-500/50 drop-shadow-[0_15px_30px_rgba(249,115,22,0.3)]' : 'text-indigo-500/40 drop-shadow-[0_15px_30px_rgba(99,102,241,0.2)]'
       }`}>
         <svg width="190" height="190" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="8" cy="18" r="4" fill="currentColor" fillOpacity="0.8" />

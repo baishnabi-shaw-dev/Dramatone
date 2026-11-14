@@ -112,7 +112,7 @@ class GeminiArrangerService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, duration: targetDuration }),
-        signal: AbortSignal.timeout(12000)
+        signal: AbortSignal.timeout(25000)
       })
 
       if (backendRes.ok) {
@@ -311,10 +311,9 @@ You MUST generate 16 to 32 note events distributed evenly across all 4 measures 
     }
 
     const candidateModels = [
-      'gemini-3.1-flash-lite',
-      'gemini-3.6-flash',
       'gemini-3.5-flash-lite',
-      'gemini-flash-lite-latest'
+      'gemini-3.8-flash',
+      'gemini-3.5-flash'
     ]
     let lastError: Error | null = null
 
@@ -327,7 +326,7 @@ You MUST generate 16 to 32 note events distributed evenly across all 4 measures 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(12000)
+          signal: AbortSignal.timeout(20000)
         })
 
         if (!res.ok) {

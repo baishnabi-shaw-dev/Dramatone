@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   User, LogOut, Sliders, Database, Cloud, Trash2, Film,
-  ShieldCheck, Search, RefreshCw
+  ShieldCheck, Search, RefreshCw, Crown, AlertTriangle, Check, X, ShieldAlert
 } from 'lucide-react'
 import { MainLayout } from '@/components/layout/MainLayout'
 import { AppRoute } from '@/components/layout/Sidebar'
@@ -15,9 +15,13 @@ interface PageProps {
   onNavigate: (page: AppRoute) => void
 }
 
+const SUPER_ADMIN_EMAIL = 'lund69633@gmail.com'
+
 export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
   const currentUser = apiClient.getCurrentUser()
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.email?.toLowerCase() === 'admin@dramatone.ai'
+  const currentEmail = (currentUser?.email || '').toLowerCase()
+  const isSuperAdmin = currentEmail === SUPER_ADMIN_EMAIL || (currentUser as any)?.isSuperAdmin
+  const isAdmin = currentUser?.role === 'admin' || isSuperAdmin || currentEmail === 'admin@dramatone.ai'
   const [ducking, setDucking] = useState(audioEngine.isDialogueDuckingEnabled())
   const [autoSyncTension, setAutoSyncTension] = useState(videoAnalysisService.isAutoSyncEnabled())
   const activeProfile = audioEngine.getActiveProfile()
@@ -47,21 +51,29 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
   // Admin & User Management State
   const [users, setUsers] = useState<any[]>([])
   const [mailingList, setMailingList] = useState<any[]>([])
+  const [removalRequests, setRemovalRequests] = useState<any[]>([])
   const [userSearch, setUserSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all')
-  const [adminTab, setAdminTab] = useState<'users' | 'mailing-list'>('users')
+  const [adminTab, setAdminTab] = useState<'users' | 'removals' | 'mailing-list'>('users')
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminMsg, setAdminMsg] = useState<string | null>(null)
+
+  // Removal Request Modal State
+  const [removalTargetUser, setRemovalTargetUser] = useState<any | null>(null)
+  const [removalReasonText, setRemovalReasonText] = useState('')
+  const [submittingRemoval, setSubmittingRemoval] = useState(false)
 
   const loadAdminData = async () => {
     setAdminLoading(true)
     try {
-      const [allUsers, subscribers] = await Promise.all([
+      const [allUsers, subscribers, requests] = await Promise.all([
         apiClient.getAdminUsers(),
-        apiClient.getMailingList()
+        apiClient.getMailingList(),
+        apiClient.getRemovalRequests()
       ])
       setUsers(allUsers)
       setMailingList(subscribers)
+      setRemovalRequests(requests)
     } finally {
       setAdminLoading(false)
     }
@@ -74,6 +86,10 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
   }, [isAdmin])
 
   const handleToggleStatus = async (user: any) => {
+    if (user.email?.toLowerCase() === SUPER_ADMIN_EMAIL || user.isSuperAdmin) {
+      alert('The Dramatone Super Admin account status cannot be altered.')
+      return
+    }
     const nextStatus = user.status === 'suspended' ? 'active' : 'suspended'
     try {
       await apiClient.updateUserStatus(user._id || user.id, nextStatus)
@@ -86,6 +102,10 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
   }
 
   const handleToggleRole = async (user: any) => {
+    if (user.email?.toLowerCase() === SUPER_ADMIN_EMAIL || user.isSuperAdmin) {
+      alert('The Dramatone Super Admin account cannot be demoted.')
+      return
+    }
     const nextRole = user.role === 'admin' ? 'user' : 'admin'
     try {
       await apiClient.updateUserStatus(user._id || user.id, undefined, nextRole)
@@ -98,14 +118,23 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
   }
 
   const handleDeleteUser = async (user: any) => {
-    if (user.email?.toLowerCase() === 'admin@dramatone.ai') {
+    const targetEmail = (user.email || '').toLowerCase()
+    if (targetEmail === SUPER_ADMIN_EMAIL || user.isSuperAdmin) {
       alert('The Dramatone Super Admin account is permanently protected and cannot be deleted.')
       return
     }
-    if (user.email?.toLowerCase() === currentUser?.email?.toLowerCase()) {
+    if (targetEmail === currentEmail) {
       alert('You cannot delete your own active administrator account.')
       return
     }
+
+    // If target is an admin and current caller is NOT Super Admin, enforce removal request flow
+    if (user.role === 'admin' && !isSuperAdmin) {
+      setRemovalTargetUser(user)
+      setRemovalReasonText('')
+      return
+    }
+
     if (confirm(`Are you sure you want to delete user ${user.email}? This action cannot be undone.`)) {
       try {
         await apiClient.deleteUser(user._id || user.id)
@@ -115,6 +144,51 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
       } catch (err: any) {
         alert(err.message || 'Failed to delete user')
       }
+    }
+  }
+
+  const handleSubmitRemovalRequest = async () => {
+    if (!removalTargetUser) return
+    if (!removalReasonText.trim() || removalReasonText.trim().length < 8) {
+      alert('Please provide a proper, detailed reason for removing this administrator (minimum 8 characters).')
+      return
+    }
+
+    setSubmittingRemoval(true)
+    try {
+      await apiClient.submitRemovalRequest(removalTargetUser._id || removalTargetUser.id, removalReasonText.trim())
+      setAdminMsg(`Removal request for ${removalTargetUser.email} submitted for Super Admin review`)
+      setRemovalTargetUser(null)
+      setRemovalReasonText('')
+      loadAdminData()
+      setTimeout(() => setAdminMsg(null), 4000)
+    } catch (err: any) {
+      alert(err.message || 'Failed to submit removal request')
+    } finally {
+      setSubmittingRemoval(false)
+    }
+  }
+
+  const handleApproveRemoval = async (requestId: string) => {
+    if (!confirm('Approve removal? This will PERMANENTLY delete the targeted administrator account.')) return
+    try {
+      await apiClient.approveRemovalRequest(requestId)
+      setAdminMsg('Admin removal approved and executed.')
+      loadAdminData()
+      setTimeout(() => setAdminMsg(null), 3000)
+    } catch (err: any) {
+      alert(err.message || 'Failed to approve removal')
+    }
+  }
+
+  const handleRejectRemoval = async (requestId: string) => {
+    try {
+      await apiClient.rejectRemovalRequest(requestId)
+      setAdminMsg('Admin removal request rejected.')
+      loadAdminData()
+      setTimeout(() => setAdminMsg(null), 3000)
+    } catch (err: any) {
+      alert(err.message || 'Failed to reject removal')
     }
   }
 
@@ -312,7 +386,7 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
 
           {/* Admin Navigation Tabs */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 bg-black/30 p-1 rounded-2xl border border-white/10 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5 bg-black/30 p-1 rounded-2xl border border-white/10 text-xs">
               <button
                 onClick={() => setAdminTab('users')}
                 className={`px-3 py-1 rounded-xl font-semibold cursor-pointer transition ${
@@ -322,6 +396,23 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
                 }`}
               >
                 User Accounts ({users.length})
+              </button>
+
+              <button
+                onClick={() => setAdminTab('removals')}
+                className={`px-3 py-1 rounded-xl font-semibold cursor-pointer transition flex items-center gap-1.5 ${
+                  adminTab === 'removals'
+                    ? isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <ShieldAlert className="w-3 h-3" />
+                <span>Admin Removal Requests</span>
+                {removalRequests.filter((r) => r.status === 'pending').length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-black font-extrabold text-[9px]">
+                    {removalRequests.filter((r) => r.status === 'pending').length}
+                  </span>
+                )}
               </button>
 
               <button
@@ -371,8 +462,8 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
             </div>
           </div>
 
-          {/* User Table / Mailing List Table */}
-          {adminTab === 'users' ? (
+          {/* TAB 1: USER ACCOUNTS TABLE */}
+          {adminTab === 'users' && (
             <div className="border border-white/10 rounded-2xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -393,83 +484,199 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
                         </td>
                       </tr>
                     ) : (
-                      filteredUsers.map((u) => (
-                        <tr key={u._id || u.id} className={`${isDark ? 'hover:bg-white/[0.02]' : 'hover:bg-slate-50'}`}>
-                          <td className="py-2 px-3">
-                            <div className="font-semibold text-white font-sans">{u.name || 'Studio User'}</div>
-                            <div className="opacity-60 text-[10px]">{u.email}</div>
-                          </td>
-                          <td className="py-2 px-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              u.role === 'admin'
-                                ? 'bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30'
-                                : 'bg-white/10 text-zinc-400'
-                            }`}>
-                              {(u.role || 'user').toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="py-2 px-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              u.status === 'suspended'
-                                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            }`}>
-                              {(u.status || 'active').toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="py-2 px-3 opacity-60 text-[10px]">
-                            {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'Just now'}
-                          </td>
-                          <td className="py-2 px-3 text-right">
-                            <div className="flex items-center justify-end gap-1.5 font-sans">
-                              {/* Make Super User / Demote to User */}
-                              {u.email?.toLowerCase() !== 'admin@dramatone.ai' && (
-                                <button
-                                  onClick={() => handleToggleRole(u)}
-                                  className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer transition ${
-                                    u.role === 'admin'
-                                      ? 'border-fuchsia-500/40 text-fuchsia-400 hover:bg-fuchsia-500/20'
-                                      : 'border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/20'
-                                  }`}
-                                  title={u.role === 'admin' ? 'Demote to regular user' : 'Grant Super User Administrator rights'}
-                                >
-                                  {u.role === 'admin' ? 'Demote' : 'Make Admin'}
-                                </button>
-                              )}
+                      filteredUsers.map((u) => {
+                        const targetIsSuperAdmin = u.isSuperAdmin || u.email?.toLowerCase() === SUPER_ADMIN_EMAIL
+                        const isSelf = u.email?.toLowerCase() === currentEmail
 
-                              {u.email?.toLowerCase() !== 'admin@dramatone.ai' && (
-                                <button
-                                  onClick={() => handleToggleStatus(u)}
-                                  className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer transition ${
-                                    u.status === 'suspended'
-                                      ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/20'
-                                      : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/20'
-                                  }`}
-                                >
-                                  {u.status === 'suspended' ? 'Reactivate' : 'Suspend'}
-                                </button>
-                              )}
-
-                              {u.email?.toLowerCase() === 'admin@dramatone.ai' || u.email?.toLowerCase() === currentUser?.email?.toLowerCase() ? (
-                                <span className="text-[10px] opacity-40 px-2 py-1 font-mono">Protected</span>
+                        return (
+                          <tr key={u._id || u.id} className={`${isDark ? 'hover:bg-white/[0.02]' : 'hover:bg-slate-50'}`}>
+                            <td className="py-2 px-3">
+                              <div className="font-semibold text-white font-sans flex items-center gap-1.5">
+                                <span>{u.name || 'Studio User'}</span>
+                                {targetIsSuperAdmin && (
+                                  <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />
+                                )}
+                              </div>
+                              <div className="opacity-60 text-[10px]">{u.email}</div>
+                            </td>
+                            <td className="py-2 px-3">
+                              {targetIsSuperAdmin ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-amber-400/20 text-amber-300 border border-amber-400/50 flex items-center gap-1 w-fit">
+                                  ⭐ SUPER ADMIN
+                                </span>
                               ) : (
-                                <button
-                                  onClick={() => handleDeleteUser(u)}
-                                  className="px-2 py-1 rounded-lg text-[10px] font-medium border border-red-500/30 text-red-400 hover:bg-red-500/20 cursor-pointer transition"
-                                >
-                                  Delete
-                                </button>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  u.role === 'admin'
+                                    ? 'bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30'
+                                    : 'bg-white/10 text-zinc-400'
+                                }`}>
+                                  {(u.role || 'user').toUpperCase()}
+                                </span>
                               )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+                            </td>
+                            <td className="py-2 px-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                u.status === 'suspended'
+                                  ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              }`}>
+                                {(u.status || 'active').toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 opacity-60 text-[10px]">
+                              {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : 'Just now'}
+                            </td>
+                            <td className="py-2 px-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5 font-sans">
+                                {targetIsSuperAdmin ? (
+                                  <span className="text-[10px] font-mono text-amber-400 font-bold px-2 py-1 bg-amber-400/10 rounded-lg border border-amber-400/30">
+                                    Permanent Super Admin
+                                  </span>
+                                ) : isSelf ? (
+                                  <span className="text-[10px] opacity-40 px-2 py-1 font-mono">Active Account</span>
+                                ) : (
+                                  <>
+                                    {/* Role toggle */}
+                                    <button
+                                      onClick={() => handleToggleRole(u)}
+                                      className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer transition ${
+                                        u.role === 'admin'
+                                          ? 'border-fuchsia-500/40 text-fuchsia-400 hover:bg-fuchsia-500/20'
+                                          : 'border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/20'
+                                      }`}
+                                      title={u.role === 'admin' ? 'Demote to regular user' : 'Grant Admin privileges'}
+                                    >
+                                      {u.role === 'admin' ? 'Demote' : 'Make Admin'}
+                                    </button>
+
+                                    {/* Status toggle */}
+                                    <button
+                                      onClick={() => handleToggleStatus(u)}
+                                      className={`px-2 py-1 rounded-lg text-[10px] font-medium border cursor-pointer transition ${
+                                        u.status === 'suspended'
+                                          ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/20'
+                                          : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/20'
+                                      }`}
+                                    >
+                                      {u.status === 'suspended' ? 'Reactivate' : 'Suspend'}
+                                    </button>
+
+                                    {/* Delete or Request Removal */}
+                                    {u.role === 'admin' && !isSuperAdmin ? (
+                                      <button
+                                        onClick={() => handleDeleteUser(u)}
+                                        title="Submit formal removal request with reason to Super Admin"
+                                        className="px-2 py-1 rounded-lg text-[10px] font-semibold border border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 cursor-pointer flex items-center gap-1 transition"
+                                      >
+                                        <AlertTriangle className="w-3 h-3" />
+                                        <span>Request Removal</span>
+                                      </button>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleDeleteUser(u)}
+                                        className="px-2 py-1 rounded-lg text-[10px] font-medium border border-red-500/30 text-red-400 hover:bg-red-500/20 cursor-pointer transition"
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })
                     )}
                   </tbody>
                 </table>
               </div>
             </div>
-          ) : (
+          )}
+
+          {/* TAB 2: ADMIN REMOVAL REQUESTS TABLE */}
+          {adminTab === 'removals' && (
+            <div className="border border-white/10 rounded-2xl overflow-hidden space-y-3">
+              <div className="p-3 border-b border-white/10 flex items-center justify-between bg-black/40 text-xs">
+                <span className="font-semibold text-zinc-300 flex items-center gap-1.5">
+                  <ShieldAlert className="w-4 h-4 text-amber-400" />
+                  <span>Admin Removal Request Queue ({removalRequests.length})</span>
+                </span>
+                <span className="text-[10px] opacity-60 font-mono">
+                  Super Admin Approval Required
+                </span>
+              </div>
+
+              {removalRequests.length === 0 ? (
+                <div className="py-10 text-center text-xs opacity-50 font-sans">
+                  No administrator removal requests submitted.
+                </div>
+              ) : (
+                <div className="divide-y divide-white/5 font-mono text-xs p-2">
+                  {removalRequests.map((req) => (
+                    <div key={req._id || req.id} className="p-3 rounded-xl hover:bg-white/[0.02] flex flex-col md:flex-row md:items-center justify-between gap-3">
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white font-sans">{req.targetName}</span>
+                          <span className="text-[11px] text-orange-400 font-mono">({req.targetEmail})</span>
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
+                            req.status === 'pending'
+                              ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40 animate-pulse'
+                              : req.status === 'approved'
+                              ? 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/40'
+                              : 'bg-red-400/20 text-red-300 border border-red-400/40'
+                          }`}>
+                            {req.status}
+                          </span>
+                        </div>
+
+                        <div className="text-[11px] font-sans opacity-80 pl-2 border-l-2 border-amber-500/50">
+                          <span className="font-semibold text-zinc-300">Stated Reason: </span>
+                          "{req.reason}"
+                        </div>
+
+                        <div className="text-[10px] opacity-50 flex items-center gap-3">
+                          <span>Requested by: {req.requestedByName} ({req.requestedByEmail})</span>
+                          <span>•</span>
+                          <span>{req.createdAt ? new Date(req.createdAt).toLocaleString() : 'Recent'}</span>
+                        </div>
+                      </div>
+
+                      {/* Action buttons (Strictly Dramatone Super Admin) */}
+                      {req.status === 'pending' && (
+                        <div className="flex items-center gap-2 shrink-0 font-sans">
+                          {isSuperAdmin ? (
+                            <>
+                              <button
+                                onClick={() => handleApproveRemoval(req._id || req.id)}
+                                className="px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center gap-1 cursor-pointer transition shadow-sm"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Approve Removal</span>
+                              </button>
+                              <button
+                                onClick={() => handleRejectRemoval(req._id || req.id)}
+                                className="px-3 py-1.5 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-zinc-300 text-xs flex items-center gap-1 cursor-pointer transition"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>Reject</span>
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-[10px] font-mono opacity-60 px-2 py-1 bg-white/5 rounded-lg border border-white/10">
+                              Awaiting Super Admin Decision
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 3: FILTERED MAILING LIST */}
+          {adminTab === 'mailing-list' && (
             <div className="border border-white/10 rounded-2xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -516,6 +723,75 @@ export function SettingsPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
             </div>
           )}
         </div>
+        )}
+
+        {/* MODAL: Request Removal of Another Admin */}
+        {removalTargetUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+            <div className={`w-full max-w-md p-6 rounded-3xl border shadow-2xl space-y-4 ${
+              isDark ? 'bg-zinc-950 border-amber-500/40 text-white' : 'bg-white border-slate-300 text-slate-900'
+            }`}>
+              <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-amber-400" />
+                  <h3 className="text-sm font-bold">Request Admin Removal</h3>
+                </div>
+                <button
+                  onClick={() => setRemovalTargetUser(null)}
+                  className="p-1 rounded-lg text-zinc-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300">
+                  <span className="font-bold">Target Administrator:</span> {removalTargetUser.name} ({removalTargetUser.email})
+                </div>
+
+                <p className="opacity-70 leading-relaxed">
+                  Under Dramatone security governance, administrators cannot directly delete peer administrators.
+                  Please provide a detailed justification. This request will be submitted directly to the <strong>Dramatone Super Admin</strong> for final authorization.
+                </p>
+
+                <div className="space-y-1">
+                  <label className="text-[11px] font-semibold text-zinc-300">
+                    Reason for Removal (Required, min 8 characters):
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={removalReasonText}
+                    onChange={(e) => setRemovalReasonText(e.target.value)}
+                    placeholder="Describe specific grounds for removal (e.g., policy violation, role transfer, unauthorized activity)..."
+                    className={`w-full rounded-xl border p-2.5 text-xs resize-none focus:outline-none ${
+                      isDark ? 'bg-black/60 border-white/15 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+                <button
+                  onClick={() => setRemovalTargetUser(null)}
+                  className="px-3 py-1.5 rounded-xl text-xs opacity-70 hover:opacity-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitRemovalRequest}
+                  disabled={submittingRemoval || removalReasonText.trim().length < 8}
+                  className={`px-4 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                    removalReasonText.trim().length >= 8
+                      ? 'bg-amber-400 text-zinc-950 hover:bg-amber-300 shadow-sm'
+                      : 'opacity-40 cursor-not-allowed bg-zinc-800 text-zinc-500'
+                  }`}
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{submittingRemoval ? 'Submitting...' : 'Submit to Super Admin'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </MainLayout>

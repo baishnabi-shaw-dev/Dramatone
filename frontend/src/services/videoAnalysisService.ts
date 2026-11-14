@@ -18,6 +18,7 @@ class VideoAnalysisService {
   private intervalTimer: number | null = null
   private isAnalyzing = false
   private autoSyncTension = true
+  private listeners: Set<AnalysisCallback> = new Set()
 
   private width = 64
   private height = 36
@@ -37,6 +38,11 @@ class VideoAnalysisService {
 
   public isAutoSyncEnabled(): boolean {
     return this.autoSyncTension
+  }
+
+  public addFrameListener(cb: AnalysisCallback): () => void {
+    this.listeners.add(cb)
+    return () => this.listeners.delete(cb)
   }
 
   // Start sampling an HTMLVideoElement at 4 FPS
@@ -87,11 +93,20 @@ class VideoAnalysisService {
           // Smoothly map motion energy to tension (baseline 20% to 95%)
           const targetTension = Math.max(15, Math.min(100, Math.round(20 + motionEnergy * 0.8)))
           audioEngine.setTension(targetTension)
+
+          // On visual scene cut, trigger acoustic transition impact!
+          if (isSceneCut) {
+            audioEngine.triggerSceneCutTransition()
+          }
         }
 
+        const frameData: VideoAnalysisFrame = { motionEnergy, isSceneCut, brightness: avgBrightness }
         if (onFrame) {
-          onFrame({ motionEnergy, isSceneCut, brightness: avgBrightness })
+          onFrame(frameData)
         }
+        this.listeners.forEach((l) => {
+          try { l(frameData) } catch {}
+        })
       } catch (err) {
         // Cross-origin video frame security catch
         console.warn('Video frame sampling skipped:', err)

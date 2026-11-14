@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Wand2, Sparkles, Sliders, Play, Pause, Trash2, Music, Flame, Zap } from 'lucide-react'
+import { Wand2, Sparkles, Sliders, Play, Pause, Trash2, Music, Flame, Zap, Bot, Save, Check } from 'lucide-react'
 import { MainLayout } from '@/components/layout/MainLayout'
 import { AppRoute } from '@/components/layout/Sidebar'
 import { generationService, GeneratedTake } from '@/features/music-generator/services/generationService'
 import { audioEngine } from '@/services/audioEngine'
+import { geminiArrangerService } from '@/services/geminiArrangerService'
+import { apiClient } from '@/services/apiClient'
 
 interface PageProps {
   isDark: boolean
@@ -13,12 +15,14 @@ interface PageProps {
 
 export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
   const [prompt, setPrompt] = useState(() => localStorage.getItem('dramatone_gen_prompt') || 'Bright brass trumpet solo with heroic cinematic accompaniment')
-  const [selectedGenre, setSelectedGenre] = useState(() => localStorage.getItem('dramatone_gen_genre') || 'Brass & Trumpet Fanfare')
-  const [selectedMood, setSelectedMood] = useState(() => localStorage.getItem('dramatone_gen_mood') || 'Heroic')
+  const [selectedGenre, setSelectedGenre] = useState(() => localStorage.getItem('dramatone_gen_genre') || 'auto')
+  const [selectedMood, setSelectedMood] = useState(() => localStorage.getItem('dramatone_gen_mood') || 'auto')
+  const [autoPacing, setAutoPacing] = useState(true)
   const [bpm, setBpm] = useState(() => Number(localStorage.getItem('dramatone_gen_bpm')) || 104)
   const [duration, setDuration] = useState(60)
   const [isGenerating, setIsGenerating] = useState(false)
   const [playingTakeId, setPlayingTakeId] = useState<number | null>(null)
+  const [savedTakeIds, setSavedTakeIds] = useState<Set<number>>(new Set())
   const [takes, setTakes] = useState<GeneratedTake[]>(() => {
     try {
       const saved = localStorage.getItem('dramatone_gen_takes')
@@ -91,13 +95,116 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
   const cardClass = isDark ? 'border-white/10 bg-black/45' : 'border-white/75 bg-white/60 shadow-sm'
   const accentText = isDark ? 'text-orange-500' : 'text-indigo-600'
 
-  const handleGenerate = () => {
+  const [genNotice, setGenNotice] = useState<string | null>(null)
+
+  const handleGenerate = async () => {
     setIsGenerating(true)
-    setTimeout(() => {
-      const newTake = generationService.generateTrack(prompt, selectedGenre, selectedMood, bpm, duration)
+    audioEngine.ensureContext()
+
+    try {
+      const g = selectedGenre === 'auto' ? '' : selectedGenre
+      const m = selectedMood === 'auto' ? '' : selectedMood
+      const tempo = autoPacing ? '' : `${bpm} BPM`
+      const fullPrompt = [prompt.trim(), g, m, tempo].filter(Boolean).join(', ')
+
+      // Call Gemini AI Arranger to compose the track
+      let arranged: any
+      try {
+        arranged = await geminiArrangerService.arrangeMusic(fullPrompt, duration)
+        setGenNotice(`🤖 Composed by Gemini AI (${arranged.notes?.length || 0} notes, ${arranged.key})`)
+      } catch (gemErr) {
+        console.warn('Gemini arrangement fallback:', gemErr)
+        arranged = geminiArrangerService.proceduralArranger(fullPrompt, duration)
+        setGenNotice('⚡ Composed via Procedural Engine')
+      }
+      setTimeout(() => setGenNotice(null), 4500)
+
+      const takeId = Date.now()
+      const newTake: GeneratedTake = {
+        id: takeId,
+        title: arranged.title || `Gemini Take #${takeId % 1000}`,
+        seed: `GEMINI-${takeId.toString(36).toUpperCase()}`,
+        key: arranged.key || 'D Minor',
+        bpm: arranged.bpm || bpm || 110,
+        genre: arranged.genre || (selectedGenre !== 'auto' ? selectedGenre : 'Cinematic Soundtrack'),
+        mood: arranged.mood || (selectedMood !== 'auto' ? selectedMood : 'Evocative'),
+        bars: Array.from({ length: 48 }, (_, i) => {
+          const stepIdx = Math.floor((i / 48) * 64)
+          const hasNote = arranged.notes?.some((n: any) => n.step === stepIdx)
+          return hasNote ? Math.floor(60 + (stepIdx % 4 === 0 ? 30 : 15)) : Math.floor(25 + Math.sin(i / 3) * 15)
+        }),
+        duration: arranged.durationSeconds || duration
+      }
+
+      if (arranged.tension) {
+        audioEngine.setTension(arranged.tension)
+      }
+
+      // Pre-load arrangement notes into audioEngine profile
+      audioEngine.loadDirectProfile(
+        {
+          genre: arranged.genre,
+          mood: arranged.mood,
+          bpm: arranged.bpm,
+          key: arranged.key,
+          leadInstrument: arranged.leadInstrument as any,
+          chords: arranged.chords,
+          scale: arranged.scale,
+          bassFreqs: arranged.bassFreqs
+        },
+        arranged.notes
+      )
+
       setTakes((prev) => [newTake, ...prev])
+
+      // Auto-save generated score to Dramatone Projects & Library (Cloud MongoDB + LocalStorage)
+      try {
+        await apiClient.saveProject({
+          title: newTake.title,
+          genre: newTake.genre,
+          mood: newTake.mood,
+          bpm: newTake.bpm,
+          tension: arranged.tension || 50,
+          stems: [
+            { id: 'stem-drums', name: arranged.stemNames?.drums || 'Drums & Percussion', volume: 85, muted: false, solo: false },
+            { id: 'stem-bass', name: arranged.stemNames?.bass || 'Bassline', volume: 80, muted: false, solo: false },
+            { id: 'stem-inst', name: arranged.stemNames?.lead || 'Melodic Lead', volume: 90, muted: false, solo: false },
+            { id: 'stem-vocal', name: arranged.stemNames?.harmony || 'Harmony / Atmosphere', volume: 75, muted: false, solo: false }
+          ]
+        })
+        setSavedTakeIds((prev) => new Set(prev).add(takeId))
+        setGenNotice(`✓ Generated & Auto-Saved "${newTake.title}" to Projects & Library!`)
+      } catch (saveErr) {
+        console.warn('Auto-save error:', saveErr)
+      }
+    } catch (err) {
+      console.error('Generation error:', err)
+    } finally {
       setIsGenerating(false)
-    }, 450)
+    }
+  }
+
+  const handleSaveTake = async (take: GeneratedTake) => {
+    try {
+      await apiClient.saveProject({
+        title: take.title,
+        genre: take.genre,
+        mood: take.mood,
+        bpm: take.bpm,
+        tension: 50,
+        stems: [
+          { id: 'stem-drums', name: 'Drums & Percussion', volume: 85, muted: false, solo: false },
+          { id: 'stem-bass', name: 'Bassline', volume: 80, muted: false, solo: false },
+          { id: 'stem-inst', name: 'Melodic Lead', volume: 90, muted: false, solo: false },
+          { id: 'stem-vocal', name: 'Harmony / Atmosphere', volume: 75, muted: false, solo: false }
+        ]
+      })
+      setSavedTakeIds((prev) => new Set(prev).add(take.id))
+      setGenNotice(`✓ Saved "${take.title}" to Projects & Library!`)
+      setTimeout(() => setGenNotice(null), 3000)
+    } catch (err) {
+      console.error('Save take error:', err)
+    }
   }
 
   const handleDeleteTake = (id: number) => {
@@ -204,13 +311,16 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
               </div>
             </div>
 
-            {/* Clean Dropdown Selectors for Genre & Mood */}
+            {/* Clean Dropdown Selectors for Genre & Mood (Both Optional) */}
             <div className="grid grid-cols-2 gap-3 pt-1">
               <div className="space-y-1.5">
-                <label className={`text-[11px] font-semibold flex items-center gap-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
-                  <Music className="w-3 h-3 text-orange-400" />
-                  <span>Genre</span>
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className={`text-[11px] font-semibold flex items-center gap-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    <Music className="w-3 h-3 text-orange-400" />
+                    <span>Genre</span>
+                  </label>
+                  <span className="text-[9px] font-mono opacity-50 uppercase tracking-wider">(Optional)</span>
+                </div>
                 <select
                   value={selectedGenre}
                   onChange={(e) => setSelectedGenre(e.target.value)}
@@ -220,6 +330,7 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
                       : 'bg-white border-slate-200 text-slate-900 focus:border-indigo-500/60 shadow-sm'
                   }`}
                 >
+                  <option value="auto">✨ Auto — Deduce from Prompt</option>
                   {genres.map((g) => (
                     <option key={g} value={g} className={isDark ? 'bg-zinc-900 text-zinc-100' : 'bg-white text-slate-900'}>
                       {g}
@@ -229,10 +340,13 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
               </div>
 
               <div className="space-y-1.5">
-                <label className={`text-[11px] font-semibold flex items-center gap-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
-                  <Flame className="w-3 h-3 text-amber-400" />
-                  <span>Mood & Pacing</span>
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className={`text-[11px] font-semibold flex items-center gap-1 ${isDark ? 'text-zinc-300' : 'text-slate-700'}`}>
+                    <Flame className="w-3 h-3 text-amber-400" />
+                    <span>Mood</span>
+                  </label>
+                  <span className="text-[9px] font-mono opacity-50 uppercase tracking-wider">(Optional)</span>
+                </div>
                 <select
                   value={selectedMood}
                   onChange={(e) => setSelectedMood(e.target.value)}
@@ -242,6 +356,7 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
                       : 'bg-white border-slate-200 text-slate-900 focus:border-indigo-500/60 shadow-sm'
                   }`}
                 >
+                  <option value="auto">✨ Auto — Emotion from Prompt</option>
                   {moods.map((m) => (
                     <option key={m} value={m} className={isDark ? 'bg-zinc-900 text-zinc-100' : 'bg-white text-slate-900'}>
                       {m}
@@ -251,27 +366,55 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
               </div>
             </div>
 
-            {/* Tempo & Duration Sliders */}
+            {/* Tempo (Optional / Auto Pacing) & Duration Sliders */}
             <div className="space-y-3 pt-1 border-t border-white/5">
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   <div className="flex justify-between items-center text-[11px]">
-                    <span className="opacity-70 font-medium">Tempo</span>
-                    <span className="font-mono font-bold text-orange-400">{bpm} BPM</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="opacity-70 font-medium">Pacing / Tempo</span>
+                      <span className="text-[9px] font-mono opacity-50">(Optional)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAutoPacing(!autoPacing)}
+                      className={`text-[9px] font-mono font-bold px-1.5 py-0.2 rounded cursor-pointer transition ${
+                        autoPacing
+                          ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                          : isDark ? 'bg-zinc-800 text-zinc-400' : 'bg-slate-200 text-slate-600'
+                      }`}
+                    >
+                      {autoPacing ? 'AUTO PACING' : 'MANUAL'}
+                    </button>
                   </div>
-                  <input
-                    type="range"
-                    min="60"
-                    max="180"
-                    value={bpm}
-                    onChange={(e) => setBpm(Number(e.target.value))}
-                    className={`w-full cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
-                  />
+
+                  {autoPacing ? (
+                    <div className={`py-1.5 px-2 rounded-xl border text-center text-[10px] font-mono ${
+                      isDark ? 'border-amber-400/30 bg-amber-400/10 text-amber-300' : 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                    }`}>
+                      ✨ AI Selects Ideal Scene Tempo
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center text-[10px] font-mono text-orange-400 font-bold">
+                        <span>Tempo Slider</span>
+                        <span>{bpm} BPM</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="60"
+                        max="180"
+                        value={bpm}
+                        onChange={(e) => setBpm(Number(e.target.value))}
+                        className={`w-full cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-[11px]">
-                    <span className="opacity-70 font-medium">Length (Max 03:00)</span>
+                    <span className="opacity-70 font-medium">Length</span>
                     <span className="font-mono font-bold text-amber-400">
                       0{Math.floor(duration / 60)}:{(duration % 60).toString().padStart(2, '0')} ({duration}s)
                     </span>
@@ -283,11 +426,19 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
                     step="15"
                     value={duration}
                     onChange={(e) => setDuration(Number(e.target.value))}
-                    className={`w-full cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
+                    className={`w-full cursor-pointer ${isDark ? 'accent-amber-400' : 'accent-indigo-600'}`}
                   />
                 </div>
               </div>
             </div>
+
+            {/* Gemini Live Notice Banner */}
+            {genNotice && (
+              <div className="p-2.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-300 text-xs font-mono font-bold flex items-center gap-2 animate-in fade-in">
+                <Bot className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>{genNotice}</span>
+              </div>
+            )}
 
             {/* Generate Action Button */}
             <button
@@ -402,6 +553,30 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
                         }`}
                       >
                         Open in DAW
+                      </button>
+
+                      <button
+                        onClick={() => handleSaveTake(take)}
+                        title={savedTakeIds.has(take.id) ? 'Saved to Projects & Library' : 'Save to Projects & Library'}
+                        className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition ${
+                          savedTakeIds.has(take.id)
+                            ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                            : isDark
+                            ? 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:text-white hover:bg-zinc-700'
+                            : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        {savedTakeIds.has(take.id) ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Saved</span>
+                          </>
+                        ) : (
+                          <>
+                            <Save className="w-3.5 h-3.5" />
+                            <span>Save to Projects</span>
+                          </>
+                        )}
                       </button>
 
                       <button
