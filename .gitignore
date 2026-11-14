@@ -2,10 +2,13 @@
 node_modules/
 dist/
 
-# Local Environment Secrets
+# Local Environment Secrets (Single backend .env only)
 .env
 .env.*
-!.env.example
+*.env
+*.env.*
+frontend/.env*
+!backend/.env.example
 
 # IDEs & Editors
 .vscode/
