@@ -111,7 +111,7 @@ class FlEngine {
 
       // Master Chain: Master Gain -> Compressor/Limiter -> Master Analyser -> Destination
       this.masterGain = this.ctx.createGain()
-      this.masterGain.gain.setValueAtTime(0.85, this.ctx.currentTime)
+      this.masterGain.gain.setValueAtTime(0.80, this.ctx.currentTime)
 
       this.masterLimiter = this.ctx.createDynamicsCompressor()
       this.masterLimiter.threshold.setValueAtTime(-1.0, this.ctx.currentTime)

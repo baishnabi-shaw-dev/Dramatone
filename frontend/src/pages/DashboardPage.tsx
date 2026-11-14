@@ -140,6 +140,25 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
     }
   }, [])
 
+  // Auto-load prompt and pacing transferred from Scene Intelligence Analyzer
+  useEffect(() => {
+    try {
+      const savedPrompt = localStorage.getItem('dramatone_scene_prompt')
+      if (savedPrompt) {
+        setPromptText(savedPrompt)
+        localStorage.removeItem('dramatone_scene_prompt')
+      }
+      const savedBpm = localStorage.getItem('dramatone_scene_bpm')
+      if (savedBpm) {
+        const bpmNum = parseInt(savedBpm, 10)
+        if (!isNaN(bpmNum) && bpmNum > 0) {
+          audioEngine.setBpm(bpmNum)
+        }
+        localStorage.removeItem('dramatone_scene_bpm')
+      }
+    } catch {}
+  }, [])
+
   // Sync Video / Audio Reference playback with AudioEngine Playhead
   useEffect(() => {
     if (videoMediaRef.current && videoDuration > 0) {
@@ -278,6 +297,46 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
     }
   }
 
+  const handleLoadDemoMedia = () => {
+    if (videoUrl) {
+      URL.revokeObjectURL(videoUrl)
+    }
+    setVideoFile(null)
+    setVideoUrl(null)
+    setVideoName('Cyberpunk_Pursuit_Cut01.mp4')
+    setVideoDuration(32)
+    audioEngine.setHasMediaTrack(true)
+
+    // Generate 4 dynamic stems with synthetic RMS waveform bars
+    const count = 48
+    const drumBars: number[] = []
+    const bassBars: number[] = []
+    const instBars: number[] = []
+    const vocalBars: number[] = []
+
+    for (let i = 0; i < count; i++) {
+      const phase = (i / count) * Math.PI * 4
+      drumBars.push(Math.round(25 + Math.abs(Math.sin(phase * 2)) * 65 + (i % 4 === 0 ? 10 : 0)))
+      bassBars.push(Math.round(20 + Math.abs(Math.cos(phase * 1.5)) * 60))
+      instBars.push(Math.round(30 + Math.abs(Math.sin(phase + 1)) * 55))
+      vocalBars.push(Math.round(15 + Math.abs(Math.cos(phase * 0.8)) * 45))
+    }
+
+    setStems([
+      { id: 'drums', name: 'Drums (Cyberpunk)', type: 'drums', volume: 85, muted: false, solo: false, bars: drumBars },
+      { id: 'bass', name: 'Bass (Cyberpunk)', type: 'guitar', volume: 80, muted: false, solo: false, bars: bassBars },
+      { id: 'keys', name: 'Synths (Cyberpunk)', type: 'keys', volume: 75, muted: false, solo: false, bars: instBars },
+      { id: 'vocal', name: 'SFX / Dialogue', type: 'vocal', volume: 80, muted: false, solo: false, bars: vocalBars }
+    ])
+
+    if (!promptText) {
+      setPromptText('Cyberpunk Action OST with high-octane pursuit, 132 BPM')
+    }
+    audioEngine.setBpm(132)
+    setSplitNotice('⚡ Loaded Cyberpunk Pursuit demo scene with 4 separated stems!')
+    setTimeout(() => setSplitNotice(null), 3500)
+  }
+
   const handleRemoveVideo = () => {
     if (videoUrl) {
       URL.revokeObjectURL(videoUrl)
@@ -290,6 +349,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
     audioEngine.notifyPlayback(false)
     setVideoFile(null)
     setVideoUrl(null)
+    setVideoName('Reference_Track.mp4')
     setVideoDuration(0)
     setShowVideoPreview(false)
     if (videoInputRef.current) videoInputRef.current.value = ''
@@ -1355,7 +1415,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
                 </div>
               </div>
 
-              {/* Upload Media Button, Remove Button, Volume Slider, Mute/Solo & Preview PiP */}
+              {/* Upload Media Button, Demo Preset, Remove Button, Volume Slider, Mute/Solo & Preview PiP */}
               <div className="flex items-center gap-1 shrink-0">
                 <button
                   onClick={() => videoInputRef.current?.click()}
@@ -1370,7 +1430,22 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
                   <span>{videoFile ? 'Change' : 'Upload'}</span>
                 </button>
 
-                {videoFile && (
+                <button
+                  onClick={handleLoadDemoMedia}
+                  title="Load pre-analyzed Cyberpunk Pursuit demo scene with 4 stems"
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex items-center gap-1 cursor-pointer transition ${
+                    videoName.includes('Cyberpunk')
+                      ? 'bg-amber-400 border-amber-300 text-zinc-950 font-black shadow-xs'
+                      : isDark
+                      ? 'border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/30'
+                      : 'border-amber-400 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                  }`}
+                >
+                  <Sparkles className="w-2.5 h-2.5 text-amber-400" />
+                  <span>Demo</span>
+                </button>
+
+                {(videoFile || videoUrl || videoDuration > 0) && (
                   <button
                     onClick={handleRemoveVideo}
                     title="Remove reference media track"

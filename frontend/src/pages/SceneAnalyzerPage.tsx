@@ -15,8 +15,57 @@ interface PageProps {
 
 const MAX_FILE_SIZE_BYTES = 150 * 1024 * 1024 // 150 MB
 
+interface DemoScenePreset {
+  id: string
+  name: string
+  icon: string
+  genre: string
+  mood: string
+  bpm: number
+  description: string
+  sampleDuration: number
+  motionProfile: number
+}
+
+const DEMO_SCENES: DemoScenePreset[] = [
+  {
+    id: 'cyberpunk-alley',
+    name: 'Cyberpunk Pursuit',
+    icon: '⚡',
+    genre: 'Cyberpunk Action OST',
+    mood: 'High-Octane Pursuit',
+    bpm: 132,
+    description: 'Rapid kinetic motion and high-contrast neon lighting detected. Recommended: Aggressive saw basslines, industrial war drums, and staccato risers.',
+    sampleDuration: 32,
+    motionProfile: 82
+  },
+  {
+    id: 'eerie-corridor',
+    name: 'Horror Corridor',
+    icon: '🌑',
+    genre: 'Dark Ambient Horror Underscore',
+    mood: 'Eerie & Menacing',
+    bpm: 74,
+    description: 'Low ambient illumination with crawling camera motion detected. Recommended: Sub-bass drones, microtonal vocal textures, and sudden transient tension peaks.',
+    sampleDuration: 45,
+    motionProfile: 38
+  },
+  {
+    id: 'nature-highlands',
+    name: 'Highland Nature',
+    icon: '🌿',
+    genre: 'Acoustic Indie & Piano',
+    mood: 'Intimate & Tender',
+    bpm: 86,
+    description: 'Sweeping expansive landscape with dialogue-friendly acoustic space. Recommended: Soft felt piano, warm nylon guitar arpeggios, and subtle ambient breeze foley.',
+    sampleDuration: 28,
+    motionProfile: 24
+  }
+]
+
 export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [activeDemoPreset, setActiveDemoPreset] = useState<string | null>(null)
   const [fileName, setFileName] = useState<string>('')
   const [fileSizeMb, setFileSizeMb] = useState<number>(0)
   const [fileError, setFileError] = useState<string | null>(null)
@@ -42,6 +91,7 @@ export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PagePro
   )
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -126,8 +176,134 @@ export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PagePro
     }
   }, [isPlaying, videoUrl])
 
+  const handleSelectDemoScene = (preset: DemoScenePreset) => {
+    setActiveDemoPreset(preset.id)
+    setVideoUrl(null)
+    setFileError(null)
+    setFileName(`${preset.name}.mp4`)
+    setFileSizeMb(42.5)
+    setDuration(preset.sampleDuration)
+    setCurrentTime(0)
+    setCutCount(0)
+    setIsPlaying(true)
+
+    setIsAnalyzingAi(true)
+    setTimeout(() => {
+      setRecommendedGenre(preset.genre)
+      setRecommendedMood(preset.mood)
+      setRecommendedBpm(preset.bpm)
+      setRecommendedDescription(preset.description)
+      setMotionEnergy(preset.motionProfile)
+      setBrightness(preset.id === 'cyberpunk-alley' ? 75 : preset.id === 'eerie-corridor' ? 25 : 60)
+      setIsAnalyzingAi(false)
+    }, 600)
+  }
+
+  // Dynamic canvas animated demo scene renderer
+  useEffect(() => {
+    if (!activeDemoPreset || !canvasRef.current) return
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    let animId: number
+    let frame = 0
+    let lastCut = Date.now()
+
+    const render = () => {
+      frame++
+      const w = canvas.width
+      const h = canvas.height
+
+      if (activeDemoPreset === 'cyberpunk-alley') {
+        ctx.fillStyle = '#0a0a14'
+        ctx.fillRect(0, 0, w, h)
+
+        ctx.strokeStyle = '#f43f5e'
+        ctx.lineWidth = 1.5
+        const offset = (frame * 6) % 40
+        for (let y = h / 2; y < h; y += 15) {
+          ctx.beginPath()
+          ctx.moveTo(0, y)
+          ctx.lineTo(w, y)
+          ctx.stroke()
+        }
+        for (let x = -w; x < w * 2; x += 60) {
+          ctx.beginPath()
+          ctx.moveTo(w / 2, h / 2)
+          ctx.lineTo(x + offset, h)
+          ctx.stroke()
+        }
+
+        ctx.fillStyle = '#06b6d4'
+        for (let b = 0; b < w; b += 55) {
+          const bh = 50 + Math.sin(b * 0.2 + frame * 0.05) * 35
+          ctx.fillRect(b, h / 2 - bh, 35, bh)
+        }
+
+        ctx.strokeStyle = '#eab308'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        const lx = (frame * 12) % w
+        ctx.moveTo(lx, 25)
+        ctx.lineTo(lx + 90, 25)
+        ctx.stroke()
+      } else if (activeDemoPreset === 'eerie-corridor') {
+        ctx.fillStyle = '#040407'
+        ctx.fillRect(0, 0, w, h)
+
+        const flicker = 0.8 + Math.sin(frame * 0.3) * 0.2
+        const grad = ctx.createRadialGradient(w / 2, h / 2, 10, w / 2, h / 2, 220 * flicker)
+        grad.addColorStop(0, 'rgba(180, 83, 9, 0.45)')
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0.96)')
+        ctx.fillStyle = grad
+        ctx.fillRect(0, 0, w, h)
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.06)'
+        const mx = (frame * 2) % w
+        ctx.fillRect(mx - 100, h / 2 - 35, 200, 70)
+      } else {
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, h)
+        skyGrad.addColorStop(0, '#38bdf8')
+        skyGrad.addColorStop(0.6, '#fde047')
+        skyGrad.addColorStop(1, '#15803d')
+        ctx.fillStyle = skyGrad
+        ctx.fillRect(0, 0, w, h)
+
+        ctx.fillStyle = '#065f46'
+        ctx.beginPath()
+        ctx.moveTo(0, h)
+        for (let x = 0; x <= w; x += 40) {
+          const my = h * 0.62 + Math.sin(x * 0.02 + frame * 0.015) * 35
+          ctx.lineTo(x, my)
+        }
+        ctx.lineTo(w, h)
+        ctx.fill()
+      }
+
+      if (isPlaying) {
+        setCurrentTime((prev) => (prev >= duration ? 0 : prev + 0.033))
+        const baseMotion = activeDemoPreset === 'cyberpunk-alley' ? 82 : activeDemoPreset === 'eerie-corridor' ? 38 : 24
+        const jitter = Math.sin(frame * 0.2) * 10 + Math.cos(frame * 0.08) * 6
+        setMotionEnergy(Math.round(Math.max(10, Math.min(100, baseMotion + jitter))))
+
+        if (Date.now() - lastCut > 7000) {
+          lastCut = Date.now()
+          setIsSceneCut(true)
+          setCutCount((c) => c + 1)
+          setTimeout(() => setIsSceneCut(false), 600)
+        }
+      }
+
+      animId = requestAnimationFrame(render)
+    }
+
+    animId = requestAnimationFrame(render)
+    return () => cancelAnimationFrame(animId)
+  }, [activeDemoPreset, isPlaying, duration])
+
   const handleTogglePlay = () => {
-    if (!videoUrl) return
+    if (!videoUrl && !activeDemoPreset) return
     setIsPlaying(!isPlaying)
   }
 
@@ -146,13 +322,20 @@ export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PagePro
   const handleScrub = (time: number) => {
     if (videoRef.current) {
       videoRef.current.currentTime = time
-      setCurrentTime(time)
     }
+    setCurrentTime(time)
   }
 
   const handleTransferToStudio = () => {
     // Transfer recognized tempo and recommended genre to audio engine
     audioEngine.setBpm(recommendedBpm)
+    // Save to localStorage so Studio Dashboard auto-loads prompt & pacing
+    localStorage.setItem(
+      'dramatone_scene_prompt',
+      `${recommendedGenre} with ${recommendedMood.toLowerCase()}, ${recommendedBpm} BPM`
+    )
+    localStorage.setItem('dramatone_scene_bpm', String(recommendedBpm))
+    localStorage.setItem('dramatone_scene_tension', String(Math.round(motionEnergy || 60)))
     // Navigate to studio workspace
     onNavigate('dashboard')
   }
@@ -197,7 +380,33 @@ export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PagePro
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-mono text-zinc-400 font-bold uppercase tracking-wider">
+              1-Click Demos:
+            </span>
+            {DEMO_SCENES.map((preset) => {
+              const isSelected = activeDemoPreset === preset.id
+              return (
+                <button
+                  key={preset.id}
+                  onClick={() => handleSelectDemoScene(preset)}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition ${
+                    isSelected
+                      ? 'bg-amber-400 text-zinc-950 font-bold shadow-md ring-2 ring-amber-300'
+                      : isDark
+                      ? 'bg-zinc-800/80 text-zinc-300 hover:text-white border border-white/10 hover:border-amber-400/40'
+                      : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                  title={preset.description}
+                >
+                  <span>{preset.icon}</span>
+                  <span>{preset.name}</span>
+                </button>
+              )
+            })}
+
+            <div className="h-4 w-px bg-white/10 mx-1 hidden sm:block" />
+
             <input
               ref={fileInputRef}
               type="file"
@@ -249,6 +458,14 @@ export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PagePro
                   onClick={handleTogglePlay}
                   className="w-full h-full object-contain cursor-pointer"
                 />
+              ) : activeDemoPreset ? (
+                <canvas
+                  ref={canvasRef}
+                  width={640}
+                  height={360}
+                  onClick={handleTogglePlay}
+                  className="w-full h-full object-contain cursor-pointer"
+                />
               ) : (
                 <div
                   onClick={() => fileInputRef.current?.click()}
@@ -261,13 +478,13 @@ export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PagePro
                     Drop a scene video clip here (≤ 150 MB)
                   </span>
                   <span className="text-[10px] opacity-50 mt-1">
-                    Supports MP4, WebM, MOV, and AVI formats
+                    Or select one of the 1-Click Demo Scenes above
                   </span>
                 </div>
               )}
 
               {/* Video Overlay Badges */}
-              {videoUrl && (
+              {(videoUrl || activeDemoPreset) && (
                 <>
                   <div className="absolute top-3 left-3 flex items-center gap-1.5 text-[10px] font-mono">
                     <span className="px-2 py-0.5 rounded bg-black/70 backdrop-blur-md border border-white/15 text-white">
@@ -276,6 +493,11 @@ export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PagePro
                     <span className="px-2 py-0.5 rounded bg-black/70 backdrop-blur-md border border-white/15 text-white">
                       Bright {brightness}%
                     </span>
+                    {activeDemoPreset && (
+                      <span className="px-2 py-0.5 rounded bg-amber-500/25 backdrop-blur-md border border-amber-500/40 text-amber-300 font-bold">
+                        DEMO SIMULATION
+                      </span>
+                    )}
                   </div>
 
                   <div className="absolute top-3 right-3 flex items-center gap-1.5 text-[10px] font-mono">
@@ -296,9 +518,9 @@ export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PagePro
             <div className="flex items-center gap-3 pt-1">
               <button
                 onClick={handleTogglePlay}
-                disabled={!videoUrl}
+                disabled={!videoUrl && !activeDemoPreset}
                 className={`w-8 h-8 rounded-full flex items-center justify-center font-bold shrink-0 cursor-pointer ${
-                  !videoUrl
+                  !videoUrl && !activeDemoPreset
                     ? 'opacity-30 bg-zinc-800 text-zinc-500'
                     : isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
                 }`}
@@ -312,7 +534,7 @@ export function SceneAnalyzerPage({ isDark, onToggleTheme, onNavigate }: PagePro
                 max={duration || 100}
                 step={0.1}
                 value={currentTime}
-                disabled={!videoUrl}
+                disabled={!videoUrl && !activeDemoPreset}
                 onChange={(e) => handleScrub(Number(e.target.value))}
                 className="flex-1 h-1.5 accent-orange-500 cursor-pointer"
               />
