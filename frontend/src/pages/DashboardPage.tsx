@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, Wand2, Plus, Piano, Drum, Guitar, Mic2, Film, Scissors, Download, Save, Check, Layers, Trash2, ChevronDown, ChevronUp, LocateFixed, GripVertical, RotateCcw } from 'lucide-react'
+import { Sparkles, Wand2, Plus, Piano, Drum, Guitar, Mic2, Film, Scissors, Download, Save, Check, Layers, Trash2, ChevronDown, ChevronUp, LocateFixed, GripVertical, RotateCcw, Key, Copy } from 'lucide-react'
 import { MainLayout } from '@/components/layout/MainLayout'
 import { AppRoute } from '@/components/layout/Sidebar'
 import { DawPianoRoll } from '@/components/daw/DawPianoRoll'
 import { audioEngine, StemId } from '@/services/audioEngine'
 import { apiClient } from '@/services/apiClient'
 import { soundscapeService } from '@/features/adaptive-soundscape/services/soundscapeService'
+import { geminiArrangerService, ArrangedComposition } from '@/services/geminiArrangerService'
 
 export interface StemClip {
   id: string
@@ -77,6 +78,13 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   const [viewMode, setViewMode] = useState<'stems' | 'piano-roll'>('stems')
   const [isPromptCollapsed, setIsPromptCollapsed] = useState(false)
   const [followSlider, setFollowSlider] = useState(true)
+
+  // Gemini AI Arranger state
+  const [aiArrangement, setAiArrangement] = useState<ArrangedComposition | null>(null)
+  const [hasGeminiKey, setHasGeminiKey] = useState<boolean>(() => geminiArrangerService.hasApiKey())
+  const [showKeyPrompt, setShowKeyPrompt] = useState(false)
+  const [tempApiKey, setTempApiKey] = useState('')
+  const [copiedPrompt, setCopiedPrompt] = useState(false)
   const timelineTracksRef = useRef<HTMLDivElement>(null)
 
   // Real-time Playhead sync with audio transport
@@ -118,72 +126,83 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   const cardClass = isDark ? 'border-white/10 bg-black/45' : 'border-white/75 bg-white/60 shadow-sm'
   const accentText = isDark ? 'text-orange-500' : 'text-indigo-600'
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     setIsGenerating(true)
     audioEngine.ensureContext()
-    setTimeout(() => {
-      const p = promptText.toLowerCase()
-      const bpmMatch = p.match(/(\d{2,3})\s*bpm/i)
-      const explicitBpm = bpmMatch ? parseInt(bpmMatch[1], 10) : undefined
 
-      const hasStrings = p.includes('string') || p.includes('violin') || p.includes('cello') || p.includes('orchestr')
-      const hasRain = p.includes('rain') || p.includes('water') || p.includes('storm') || p.includes('foley')
-      const hasBuild = p.includes('build') || p.includes('gradual') || p.includes('crescendo') || p.includes('swell')
-      const isTrumpet = p.includes('trumpet') || p.includes('brass') || p.includes('horn') || p.includes('fanfare')
-      const isEerie = (p.includes('eerie') || p.includes('creepy') || p.includes('horror') || p.includes('ghost')) && !hasStrings
+    try {
+      const promptToUse = promptText.trim() || 'Cinematic score, emotional, tender'
+      const arranged = await geminiArrangerService.arrangeMusic(promptToUse)
+      setAiArrangement(arranged)
 
-      if (hasRain || (hasStrings && (p.includes('dark') || hasBuild || p.includes('cinematic')))) {
-        audioEngine.loadComposition('Dark Cinematic Build', 'Tense', explicitBpm || 90, {
-          hasStrings: true,
-          hasRainFoley: hasRain,
-          hasGradualBuild: hasBuild,
-          hasSubBass: true,
-          hasStaccato: true
-        })
-        audioEngine.setTension(hasBuild ? 35 : 75)
-      } else if (isTrumpet) {
-        audioEngine.loadComposition('Brass & Trumpet', 'Heroic', explicitBpm || 104)
-        audioEngine.setTension(60)
-      } else if (isEerie) {
-        audioEngine.loadComposition('Eerie & Dark Horror', 'Tense', explicitBpm || 62)
-        audioEngine.setTension(80)
-      } else if (p.includes('lo-fi') || p.includes('chill') || p.includes('piano')) {
-        audioEngine.loadComposition('Lo-Fi Chill', 'Chill', explicitBpm || 85)
-        audioEngine.setTension(40)
-      } else if (p.includes('cinematic') || p.includes('epic') || p.includes('film')) {
-        audioEngine.loadComposition('Cinematic Score', 'Dramatic', explicitBpm || 90, {
-          hasStrings: true,
-          hasGradualBuild: hasBuild
-        })
-        audioEngine.setTension(70)
-      } else if (p.includes('action') || p.includes('cyber') || p.includes('pulse')) {
-        audioEngine.loadComposition('Cyberpunk', 'Suspense', explicitBpm || 130)
-        audioEngine.setTension(85)
-      } else if (p.includes('ambient') || p.includes('drone')) {
-        audioEngine.loadComposition('Ambient Drone', 'Calm', explicitBpm || 72)
-        audioEngine.setTension(25)
-      } else {
-        audioEngine.loadComposition('Cinematic Score', 'Dramatic', explicitBpm || 90)
-        audioEngine.setTension(55)
+      // 1. Direct load into audio engine with synthesized profile
+      audioEngine.loadDirectProfile(
+        {
+          genre: arranged.genre,
+          mood: arranged.mood,
+          bpm: arranged.bpm,
+          key: arranged.key,
+          leadInstrument: arranged.leadInstrument,
+          hasDrums: arranged.tension > 20,
+          hasStrings: arranged.hasStrings,
+          hasStaccato: arranged.hasStaccato,
+          hasRainFoley: arranged.hasRainFoley,
+          hasGradualBuild: arranged.hasGradualBuild,
+          hasSubBass: arranged.hasSubBass,
+          chords: arranged.chords,
+          scale: arranged.scale,
+          bassFreqs: arranged.bassFreqs
+        },
+        arranged.tension
+      )
+
+      // 2. Dispatch event to populate DAW Piano Roll with 64-step note blocks
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('dramatone_daw_notes', JSON.stringify(arranged.notes))
+          window.dispatchEvent(new CustomEvent('dramatone:load-notes', { detail: arranged.notes }))
+        } catch {}
       }
 
+      // 3. Update stems view with tailored names and waveforms
       setStems((prev) =>
         prev.map((s) => ({
           ...s,
-          name: s.id === 'keys'
-            ? hasStrings ? 'Cinematic Strings (Violins)' : isEerie ? 'Dissonant Drone Pad' : isTrumpet ? 'Trumpet / Brass Lead' : 'Dramatone Keys'
-            : s.id === 'drums'
-            ? hasStrings ? 'Cinematic Timpani' : 'Neural Drums'
-            : s.id === 'guitar'
-            ? hasStrings ? 'Staccato String Ostinato' : 'Acoustic Pluck'
-            : s.id === 'vocal'
-            ? hasRain ? 'Ambient Rain Foley' : isEerie ? 'Phantom Whisper Texture' : 'Vocal Texture'
-            : s.name,
+          name:
+            s.id === 'keys'
+              ? arranged.stemNames.keys
+              : s.id === 'drums'
+              ? arranged.stemNames.drums
+              : s.id === 'guitar'
+              ? arranged.stemNames.guitar
+              : s.id === 'vocal'
+              ? arranged.stemNames.vocal
+              : s.name,
           bars: generateStemBars(s.type)
         }))
       )
+
+      setSplitNotice(
+        arranged.isMock
+          ? `🤖 Procedural Score: "${arranged.title}" (${arranged.bpm} BPM • ${arranged.key})`
+          : `⚡ Gemini 1.5 Score: "${arranged.title}" (${arranged.bpm} BPM • ${arranged.key})`
+      )
+      setTimeout(() => setSplitNotice(null), 3500)
+    } catch (err) {
+      console.error('Error during AI generation:', err)
+    } finally {
       setIsGenerating(false)
-    }, 400)
+    }
+  }
+
+  const handleSaveApiKey = () => {
+    if (!tempApiKey.trim()) return
+    geminiArrangerService.setApiKey(tempApiKey.trim())
+    setHasGeminiKey(true)
+    setShowKeyPrompt(false)
+    setTempApiKey('')
+    setSplitNotice('🔑 Gemini API Key saved to session!')
+    setTimeout(() => setSplitNotice(null), 2500)
   }
 
   // Selecting suggestion chips only pre-populates prompt without triggering immediate audio switch
@@ -453,6 +472,26 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {hasGeminiKey ? (
+              <button
+                onClick={() => setShowKeyPrompt(!showKeyPrompt)}
+                title="Google Gemini API Active. Click to view/update API Key."
+                className="text-[10px] font-mono px-2 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-400 flex items-center gap-1 cursor-pointer hover:bg-emerald-500/20 transition"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Gemini Online</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowKeyPrompt(!showKeyPrompt)}
+                title="Running in Procedural Mock Mode. Click to add your Gemini API Key."
+                className="text-[10px] font-mono px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-400 flex items-center gap-1 cursor-pointer hover:bg-amber-500/20 transition"
+              >
+                <Key className="w-2.5 h-2.5" />
+                <span>Gemini Mock Mode (Add Key)</span>
+              </button>
+            )}
+
             <button onClick={() => onNavigate('soundscape')} className={`text-[11px] hover:underline cursor-pointer ${accentText}`}>
               Adaptive Score
             </button>
@@ -463,12 +502,41 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
           </div>
         </div>
 
+        {showKeyPrompt && (
+          <div className={`p-2.5 rounded-2xl border flex flex-col sm:flex-row items-center gap-2 ${isDark ? 'bg-zinc-900 border-amber-500/30' : 'bg-amber-50 border-amber-300'}`}>
+            <div className="flex items-center gap-1.5 flex-1 w-full">
+              <Key className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <input
+                type="password"
+                value={tempApiKey}
+                onChange={(e) => setTempApiKey(e.target.value)}
+                placeholder="Paste Gemini API Key (e.g. AIzaSy...) or set VITE_GEMINI_API_KEY in frontend/.env"
+                className={`w-full text-xs px-2 py-1 rounded-lg border focus:outline-none font-mono ${isDark ? 'bg-black/60 border-white/10 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
+              />
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto justify-end">
+              <button
+                onClick={handleSaveApiKey}
+                className="px-3 py-1 rounded-lg bg-amber-500 text-black text-xs font-bold hover:bg-amber-400 cursor-pointer transition"
+              >
+                Save Key
+              </button>
+              <button
+                onClick={() => setShowKeyPrompt(false)}
+                className="px-2 py-1 rounded-lg text-xs opacity-60 hover:opacity-100 cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
         {!isPromptCollapsed && (
           <>
             <textarea
               rows={2}
               value={promptText}
-              placeholder="Describe your desired soundscape (e.g. 'eerie sound', 'brass fanfare', 'cinematic score')..."
+              placeholder="Describe your desired soundscape (e.g. 'the main character is feeling shy', 'brass fanfare', 'cinematic score')..."
               onChange={(e) => setPromptText(e.target.value)}
               className={`w-full rounded-2xl border p-2.5 text-xs resize-none focus:outline-none ${isDark ? 'bg-zinc-950/70 border-white/10 text-zinc-100 placeholder:text-zinc-600' : 'bg-white/80 border-white text-slate-900 placeholder:text-slate-400'
                 }`}
@@ -476,16 +544,25 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap gap-1.5">
-                {['Trumpet Fanfare', 'Cinematic Riser', 'Lo-Fi Beat', 'Ambient Pad', 'Action Pulse'].map((preset) => (
+                {['Character Feeling Shy', 'Trumpet Fanfare', 'Cinematic Riser', 'Lo-Fi Beat', 'Ambient Pad', 'Action Pulse'].map((preset) => (
                   <button
                     key={preset}
-                    onClick={() => handleSelectPreset(preset)}
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-medium border cursor-pointer transition ${isDark
+                    onClick={() => {
+                      if (preset === 'Character Feeling Shy') {
+                        setPromptText('The main character is feeling shy and hesitating to speak, looking down nervously')
+                      } else {
+                        handleSelectPreset(preset)
+                      }
+                    }}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-medium border cursor-pointer transition ${
+                      preset === 'Character Feeling Shy'
+                        ? isDark ? 'border-amber-400/50 bg-amber-400/10 text-amber-300 font-semibold' : 'border-indigo-400 bg-indigo-50 text-indigo-700 font-semibold'
+                        : isDark
                         ? 'border-white/10 bg-white/5 text-zinc-300 hover:border-orange-500/40'
                         : 'border-white bg-white/80 text-slate-700 hover:border-indigo-400'
-                      }`}
+                    }`}
                   >
-                    {preset}
+                    {preset === 'Character Feeling Shy' ? '✨ ' + preset : preset}
                   </button>
                 ))}
               </div>
@@ -497,9 +574,58 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
                   }`}
               >
                 <Wand2 className="w-3.5 h-3.5" />
-                <span>{isGenerating ? 'Synthesizing...' : 'Generate Stems'}</span>
+                <span>{isGenerating ? 'Arranging AI Score...' : 'Generate Stems'}</span>
               </button>
             </div>
+
+            {aiArrangement && (
+              <div className={`p-2.5 rounded-2xl border text-xs flex flex-col gap-1.5 transition-all ${
+                isDark ? 'bg-orange-500/5 border-orange-500/20 text-zinc-300' : 'bg-indigo-50/80 border-indigo-200 text-slate-800'
+              }`}>
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-orange-400 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" />
+                      {aiArrangement.title}
+                    </span>
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 opacity-75">
+                      {aiArrangement.key} • {aiArrangement.bpm} BPM • {aiArrangement.mood}
+                    </span>
+                  </div>
+                  <span className="text-[9px] font-mono opacity-60">
+                    {aiArrangement.isAiGenerated ? '⚡ Gemini 1.5 Flash' : '🤖 Procedural Arranger'}
+                  </span>
+                </div>
+
+                <div className="text-[11px] font-serif italic opacity-90 pl-1 border-l-2 border-orange-500/40">
+                  "{aiArrangement.explanation}"
+                </div>
+
+                {/* Diffusion Acoustic Brief */}
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/5">
+                  <div className="text-[10px] font-mono truncate text-zinc-400 flex-1">
+                    <span className="font-semibold text-orange-300">MusicGen Prompt: </span>
+                    {aiArrangement.diffusionPrompt}
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(aiArrangement.diffusionPrompt)
+                      setCopiedPrompt(true)
+                      setTimeout(() => setCopiedPrompt(false), 2000)
+                    }}
+                    title="Copy acoustic prompt for MusicGen / Stable Audio"
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono border cursor-pointer shrink-0 flex items-center gap-1 transition ${
+                      copiedPrompt
+                        ? 'bg-emerald-500 text-black border-emerald-400 font-bold'
+                        : isDark ? 'border-white/10 bg-white/5 text-zinc-300 hover:text-white' : 'border-slate-300 bg-white text-slate-700'
+                    }`}
+                  >
+                    <Copy className="w-2.5 h-2.5" />
+                    {copiedPrompt ? 'Copied!' : 'Copy Brief'}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

@@ -427,6 +427,23 @@ class AudioEngine {
     return this.activeProfile
   }
 
+  // Load AI / Custom Dynamic Profile directly (from Gemini Arranger)
+  public loadDirectProfile(profile: GenreProfile, tension = 50) {
+    this.hasActiveComposition = true
+    this.activeProfile = { ...profile }
+    this.params.genre = profile.genre
+    this.params.mood = profile.mood
+    this.params.bpm = profile.bpm
+    this.scaleFrequencies = [...profile.scale]
+    this.hasStrings = Boolean(profile.hasStrings)
+    this.hasStaccato = Boolean(profile.hasStaccato)
+    this.hasRainFoley = Boolean(profile.hasRainFoley)
+    this.hasGradualBuild = Boolean(profile.hasGradualBuild)
+    this.hasSubBass = Boolean(profile.hasSubBass)
+    this.params.tension = tension
+    this.updateAudioRouting()
+  }
+
   // Calculate actual gain taking into account tension, mute, solo, and volume slider
   private calculateStemGain(stemId: StemId): number {
     const stem = this.stems[stemId]

@@ -131,6 +131,21 @@ export function DawPianoRoll({ isDark, className = '', showFullHeader = true }: 
     } catch {}
   }, [selectedInstrument])
 
+  // Listen for external AI generation notes (from Gemini Arranger)
+  useEffect(() => {
+    const handleLoadAiNotes = (e: Event) => {
+      const customEvent = e as CustomEvent<NoteBlock[]>
+      if (Array.isArray(customEvent.detail) && customEvent.detail.length > 0) {
+        setNotes(customEvent.detail)
+        setLoadedPresetName('Gemini AI Score')
+      }
+    }
+    window.addEventListener('dramatone:load-notes', handleLoadAiNotes)
+    return () => {
+      window.removeEventListener('dramatone:load-notes', handleLoadAiNotes)
+    }
+  }, [])
+
   // Dedicated DAW Sequencer Clock (Independent of video transport)
   useEffect(() => {
     if (!isDawPlaying) {
