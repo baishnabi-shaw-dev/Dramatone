@@ -10,16 +10,36 @@ export interface NoteBlock {
   duration: number // in steps (default 1 or 2)
 }
 
-export const INSTRUMENT_OPTIONS: { id: DawInstrument; label: string; icon: string; desc: string }[] = [
-  { id: 'keys', label: 'Grand Piano', icon: '🎹', desc: 'Raw Acoustic Hammer' },
-  { id: 'epiano', label: 'Rhodes Piano', icon: '✨', desc: 'Vintage Bell Tine' },
-  { id: 'trumpet', label: 'Solo Trumpet', icon: '🎺', desc: 'Raw Brass Lead' },
-  { id: 'strings', label: 'Violin / Strings', icon: '🎻', desc: 'Orchestral Bowed' },
-  { id: 'guitar', label: 'Acoustic Guitar', icon: '🎸', desc: 'Raw Pluck' },
-  { id: 'bass', label: '808 Sub-Bass', icon: '🔊', desc: 'Raw Sub Foundation' },
-  { id: 'flute', label: 'Concert Flute', icon: '🍃', desc: 'Airy Woodwind' },
-  { id: 'synth', label: 'Analog Synth', icon: '⚡', desc: 'Resonant Square Lead' },
-  { id: 'percussion', label: 'Drum Kit & Foley', icon: '🥁', desc: 'Raw Kick, Snare & Hats' },
+export const INSTRUMENT_OPTIONS: { id: DawInstrument; label: string; icon: string; desc: string; category: string }[] = [
+  // Keyboards
+  { id: 'piano', label: 'Grand Piano', icon: '🎹', desc: 'Raw Acoustic Hammer', category: 'Keyboards' },
+  { id: 'epiano', label: 'Rhodes Piano', icon: '✨', desc: 'Vintage Bell Tine & Chime', category: 'Keyboards' },
+
+  // Guitars & Plucks
+  { id: 'guitar', label: 'Acoustic Guitar', icon: '🎸', desc: 'Nylon Pluck & Resonant Body', category: 'Guitars & Plucks' },
+  { id: 'electricGuitar', label: 'Electric Guitar', icon: '⚡', desc: 'Overdriven Solo Lead', category: 'Guitars & Plucks' },
+  { id: 'harp', label: 'Celtic Harp', icon: '🪕', desc: 'Crystalline Acoustic Pluck', category: 'Guitars & Plucks' },
+
+  // Bowed Strings
+  { id: 'violin', label: 'Solo Violin', icon: '🎻', desc: 'Expressive Bow & 5.6Hz Vibrato', category: 'Bowed Strings' },
+  { id: 'cello', label: 'Solo Cello', icon: '🎻', desc: 'Deep Resonant Bowed Wood', category: 'Bowed Strings' },
+  { id: 'strings', label: 'String Ensemble', icon: '🎼', desc: 'Symphonic Stereo Swell', category: 'Bowed Strings' },
+
+  // Brass & Woodwinds
+  { id: 'trumpet', label: 'Solo Trumpet', icon: '🎺', desc: 'Raw Brass Fanfare & Lead', category: 'Brass & Woodwinds' },
+  { id: 'saxophone', label: 'Solo Saxophone', icon: '🎷', desc: 'Soulful Expressive Reed', category: 'Brass & Woodwinds' },
+  { id: 'flute', label: 'Concert Flute', icon: '🍃', desc: 'Airy Woodwind Breath', category: 'Brass & Woodwinds' },
+
+  // Bass
+  { id: 'bassGuitar', label: 'Electric Bass', icon: '🎸', desc: 'Punchy Finger Pluck', category: 'Bass' },
+  { id: 'subBass', label: '808 Sub-Bass', icon: '🔊', desc: 'Deep Sub Pitch Dive', category: 'Bass' },
+
+  // Synths
+  { id: 'synthLead', label: 'Moog Synth Lead', icon: '⚡', desc: 'Resonant Analog Saw', category: 'Synths & Pads' },
+  { id: 'pad', label: 'Ambient Pad', icon: '🌌', desc: 'Lush Detuned Atmosphere', category: 'Synths & Pads' },
+
+  // Percussion
+  { id: 'percussion', label: 'Drum Kit & 808', icon: '🥁', desc: 'Kick, Snare & Hi-Hats', category: 'Percussion' },
 ]
 
 export const PRESET_PATTERNS = [
@@ -81,6 +101,8 @@ interface DawPianoRollProps {
 export function DawPianoRoll({ isDark, className = '', showFullHeader = true }: DawPianoRollProps) {
   const [notes, setNotes] = useState<NoteBlock[]>(() => {
     try {
+      const active = audioEngine.getActiveNotes()
+      if (active && active.length > 0) return active
       const saved = localStorage.getItem('dramatone_daw_notes')
       return saved ? JSON.parse(saved) : []
     } catch {
@@ -93,11 +115,16 @@ export function DawPianoRoll({ isDark, className = '', showFullHeader = true }: 
   const [selectedInstrument, setSelectedInstrument] = useState<DawInstrument>(() => {
     try {
       const saved = localStorage.getItem('dramatone_daw_instrument')
-      return (saved as DawInstrument) || 'keys'
+      if (saved === 'keys') return 'piano'
+      if (saved === 'bass') return 'subBass'
+      if (saved === 'synth') return 'synthLead'
+      if (saved === 'pluck') return 'harp'
+      return (saved as DawInstrument) || 'piano'
     } catch {
-      return 'keys'
+      return 'piano'
     }
   })
+  const [isSoloMode, setIsSoloMode] = useState<boolean>(() => audioEngine.getDawSolo())
   const [isRecordMode, setIsRecordMode] = useState(false)
   const [midiDevices, setMidiDevices] = useState<string[]>([])
   const [midiStatus, setMidiStatus] = useState<string>('Ready for MIDI controller')
@@ -378,7 +405,26 @@ export function DawPianoRoll({ isDark, className = '', showFullHeader = true }: 
     let profile = audioEngine.getActiveProfile()
 
     if (presetId === 'ai') {
-      const aiLead = (profile.leadInstrument as DawInstrument) || 'keys'
+      const activeAiNotes = audioEngine.getActiveNotes()
+      if (activeAiNotes && activeAiNotes.length > 0) {
+        setNotes(
+          activeAiNotes.map((n, i) => ({
+            id: n.id || `ai-note-${i}`,
+            midi: n.midi,
+            step: n.step % TOTAL_STEPS,
+            duration: n.duration || 1
+          }))
+        )
+        let aiLead = (profile.leadInstrument as DawInstrument) || 'piano'
+        if ((aiLead as string) === 'keys') aiLead = 'piano'
+        setSelectedInstrument(aiLead)
+        selectedInstrumentRef.current = aiLead
+        setLoadedPresetName('Gemini AI Score')
+        setTimeout(() => setLoadedPresetName(null), 2500)
+        return
+      }
+      let aiLead = (profile.leadInstrument as DawInstrument) || 'piano'
+      if ((aiLead as string) === 'keys') aiLead = 'piano'
       setSelectedInstrument(aiLead)
       selectedInstrumentRef.current = aiLead
     } else if (presetId === 'darkCinematic') {
@@ -495,6 +541,22 @@ export function DawPianoRoll({ isDark, className = '', showFullHeader = true }: 
     }
 
     setNotes(newNotes)
+    if (presetId === 'darkCinematic') {
+      setSelectedInstrument('violin')
+      selectedInstrumentRef.current = 'violin'
+    } else if (presetId === 'trumpet') {
+      setSelectedInstrument('trumpet')
+      selectedInstrumentRef.current = 'trumpet'
+    } else if (presetId === 'lofi') {
+      setSelectedInstrument('epiano')
+      selectedInstrumentRef.current = 'epiano'
+    } else if (presetId === 'cyberpunk') {
+      setSelectedInstrument('synthLead')
+      selectedInstrumentRef.current = 'synthLead'
+    } else if (presetId === 'ambient') {
+      setSelectedInstrument('pad')
+      selectedInstrumentRef.current = 'pad'
+    }
     const match = PRESET_PATTERNS.find((p) => p.id === presetId)
     setLoadedPresetName(match ? match.name : presetId)
     setTimeout(() => setLoadedPresetName(null), 2500)
@@ -514,6 +576,10 @@ export function DawPianoRoll({ isDark, className = '', showFullHeader = true }: 
               <span className="font-bold flex items-center gap-1.5 tracking-tight text-[13px]">
                 <Music className="w-4 h-4 text-orange-400" />
                 <span>DAW Roll &amp; MIDI Studio</span>
+              </span>
+
+              <span className={`px-2 py-0.5 rounded-full border text-[10px] font-mono ${isDark ? 'border-orange-500/30 bg-orange-500/10 text-orange-400' : 'border-indigo-300 bg-indigo-50 text-indigo-700'}`}>
+                4-Bar Motif Loop (64 Steps)
               </span>
 
               {/* Hardware Web MIDI Status Pill */}
@@ -664,89 +730,136 @@ export function DawPianoRoll({ isDark, className = '', showFullHeader = true }: 
       {/* Main Studio Body: Instruments Rack (Left) + Piano Roll Grid (Right) */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden select-none bg-[#13151c] min-h-[360px]">
         {/* DEDICATED INSTRUMENTS RACK: Positioned at Left (Collapsible for maximum roll width) */}
-        <div className={`w-full ${isRackOpen ? 'md:w-44' : 'md:w-12'} shrink-0 border-r flex flex-col transition-[width] duration-200 ${
+        <div className={`w-full ${isRackOpen ? 'md:w-52' : 'md:w-12'} shrink-0 border-r flex flex-col transition-[width] duration-200 ${
           isDark ? 'border-[#262b37] bg-[#0d0f15]' : 'border-slate-200 bg-slate-50'
         }`}>
           <div className={`p-2 border-b flex items-center justify-between text-xs font-bold ${isDark ? 'border-white/5 text-zinc-300' : 'border-slate-200 text-slate-700'}`}>
             {isRackOpen ? (
               <>
-                <div>
+                <div className="min-w-0">
                   <span className="flex items-center gap-1.5 uppercase text-[10px] tracking-wider font-extrabold text-orange-400">
                     <Music className="w-3.5 h-3.5" />
                     Raw Voices
                   </span>
-                  <span className="text-[9px] font-normal text-zinc-500 block">Direct Master Bus</span>
+                  <span className="text-[9px] font-normal text-zinc-500 block truncate">Direct Master Bus</span>
                 </div>
-                <button
-                  onClick={() => setIsRackOpen(false)}
-                  title="Collapse Instruments Rack to icons"
-                  className="text-zinc-400 hover:text-white cursor-pointer p-0.5 rounded hover:bg-white/10"
-                >
-                  <PanelLeftClose className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => {
+                      const next = !isSoloMode
+                      setIsSoloMode(next)
+                      audioEngine.setDawSolo(next)
+                    }}
+                    title={isSoloMode ? "Solo Active: Background accompaniment muted, playing raw voice only" : "Solo Channel: Isolate raw instrument like FL Studio Channel Solo"}
+                    className={`px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wider uppercase cursor-pointer transition ${
+                      isSoloMode
+                        ? 'bg-amber-400 text-zinc-950 font-black shadow-sm ring-1 ring-amber-300'
+                        : isDark
+                        ? 'bg-white/10 text-zinc-400 hover:text-white'
+                        : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                    }`}
+                  >
+                    {isSoloMode ? 'SOLO ON' : 'SOLO'}
+                  </button>
+                  <button
+                    onClick={() => setIsRackOpen(false)}
+                    title="Collapse Instruments Rack to icons"
+                    className="text-zinc-400 hover:text-white cursor-pointer p-0.5 rounded hover:bg-white/10"
+                  >
+                    <PanelLeftClose className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </>
             ) : (
-              <button
-                onClick={() => setIsRackOpen(true)}
-                title="Expand Instruments Rack"
-                className="mx-auto text-orange-400 hover:text-white cursor-pointer p-1 rounded hover:bg-white/10"
-              >
-                <PanelLeftOpen className="w-3.5 h-3.5" />
-              </button>
+              <div className="flex flex-col items-center gap-1 mx-auto">
+                <button
+                  onClick={() => setIsRackOpen(true)}
+                  title="Expand Instruments Rack"
+                  className="text-orange-400 hover:text-white cursor-pointer p-1 rounded hover:bg-white/10"
+                >
+                  <PanelLeftOpen className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => {
+                    const next = !isSoloMode
+                    setIsSoloMode(next)
+                    audioEngine.setDawSolo(next)
+                  }}
+                  title={isSoloMode ? "Solo Active: Click to disable" : "Enable Channel Solo Mode"}
+                  className={`w-6 h-4 rounded text-[8px] font-bold uppercase cursor-pointer flex items-center justify-center transition ${
+                    isSoloMode ? 'bg-amber-400 text-zinc-950 font-black' : 'text-zinc-500 hover:text-white'
+                  }`}
+                >
+                  S
+                </button>
+              </div>
             )}
           </div>
 
           <div className="flex-1 p-1.5 space-y-1 overflow-y-auto">
-            {INSTRUMENT_OPTIONS.map((inst) => {
+            {INSTRUMENT_OPTIONS.map((inst, idx) => {
               const isSelected = selectedInstrument === inst.id
+              const prevCat = idx > 0 ? INSTRUMENT_OPTIONS[idx - 1].category : null
+              const showCategory = isRackOpen && inst.category && inst.category !== prevCat
+              const auditionPitch = (inst.id === 'subBass' || inst.id === 'bass' || inst.id === 'bassGuitar' || inst.id === 'cello') ? 48 : 60
+
               return (
-                <button
-                  key={inst.id}
-                  onClick={() => {
-                    setSelectedInstrument(inst.id)
-                    selectedInstrumentRef.current = inst.id
-                    playNote(60, 0.75) // preview note audition
-                  }}
-                  title={`${inst.label} (${inst.desc}) - Click to switch voice`}
-                  className={`w-full rounded-xl border flex items-center cursor-pointer transition ${
-                    isRackOpen ? 'p-2 justify-between gap-1.5 text-left' : 'h-8 justify-center'
-                  } ${
-                    isSelected
-                      ? isDark
-                        ? 'border-orange-500 bg-orange-500/20 text-orange-300 shadow-sm'
-                        : 'border-indigo-600 bg-indigo-50 text-indigo-900 font-bold shadow-sm'
-                      : isDark
-                      ? 'border-white/5 bg-white/[0.02] text-zinc-400 hover:border-white/15 hover:bg-white/5 hover:text-zinc-200'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                  }`}
-                >
-                  {isRackOpen ? (
-                    <>
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-sm shrink-0">{inst.icon}</span>
-                        <div className="truncate">
-                          <div className={`text-[11px] leading-tight font-semibold truncate ${isSelected ? (isDark ? 'text-white' : 'text-indigo-950 font-bold') : ''}`}>
-                            {inst.label}
-                          </div>
-                          <div className="text-[9px] opacity-60 truncate">
-                            {inst.desc}
+                <div key={inst.id} className="space-y-0.5">
+                  {showCategory && (
+                    <div className={`px-1 pt-2 pb-0.5 text-[8px] font-mono uppercase tracking-wider font-semibold ${
+                      isDark ? 'text-zinc-500' : 'text-slate-400'
+                    }`}>
+                      {inst.category}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => {
+                      setSelectedInstrument(inst.id)
+                      selectedInstrumentRef.current = inst.id
+                      playNote(auditionPitch, 0.75) // preview note audition at natural register
+                    }}
+                    title={`${inst.label} (${inst.desc}) - Click to audition & switch voice`}
+                    className={`w-full rounded-xl border flex items-center cursor-pointer transition ${
+                      isRackOpen ? 'p-1.5 justify-between gap-1.5 text-left' : 'h-8 justify-center'
+                    } ${
+                      isSelected
+                        ? isDark
+                          ? 'border-orange-500 bg-orange-500/20 text-orange-300 shadow-sm'
+                          : 'border-indigo-600 bg-indigo-50 text-indigo-900 font-bold shadow-sm'
+                        : isDark
+                        ? 'border-white/5 bg-white/[0.02] text-zinc-400 hover:border-white/15 hover:bg-white/5 hover:text-zinc-200'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    {isRackOpen ? (
+                      <>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm shrink-0">{inst.icon}</span>
+                          <div className="truncate">
+                            <div className={`text-[11px] leading-tight font-semibold truncate ${isSelected ? (isDark ? 'text-white' : 'text-indigo-950 font-bold') : ''}`}>
+                              {inst.label}
+                            </div>
+                            <div className="text-[9px] opacity-60 truncate">
+                              {inst.desc}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      {isSelected && (
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isDark ? 'bg-orange-400 animate-pulse' : 'bg-indigo-600'}`} />
-                      )}
-                    </>
-                  ) : (
-                    <span className="text-sm">{inst.icon}</span>
-                  )}
-                </button>
+                        {isSelected && (
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isDark ? 'bg-orange-400 animate-pulse' : 'bg-indigo-600'}`} />
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-sm">{inst.icon}</span>
+                    )}
+                  </button>
+                </div>
               )
             })}
           </div>
 
-          <div className={`p-1.5 border-t text-[9px] font-mono opacity-50 text-center ${isDark ? 'border-white/5' : 'border-slate-200'}`}>
-            {isRackOpen ? 'Keys: A - K' : 'A-K'}
+          <div className={`p-1.5 border-t text-[9px] font-mono opacity-60 text-center flex items-center justify-between px-2 ${isDark ? 'border-white/5 text-zinc-400' : 'border-slate-200 text-slate-500'}`}>
+            <span>{isRackOpen ? '16 FL Solo Voices' : '16'}</span>
+            <span className="font-bold text-orange-400">{isRackOpen ? 'Keys: A - K' : 'A-K'}</span>
           </div>
         </div>
 
@@ -801,8 +914,8 @@ export function DawPianoRoll({ isDark, className = '', showFullHeader = true }: 
 
                         {/* Measure Number */}
                         {isMeasureStart && (
-                          <span className="text-[10px] font-bold text-zinc-300 pl-1">
-                            {measureNum}
+                          <span className="text-[10px] font-bold text-zinc-300 pl-1 whitespace-nowrap">
+                            Bar {measureNum}
                           </span>
                         )}
                       </div>

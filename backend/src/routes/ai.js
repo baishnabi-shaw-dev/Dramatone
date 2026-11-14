@@ -9,12 +9,16 @@ aiRouter.get('/status', (req, res) => {
   })
 })
 
-// Arrange prompt via Gemini 1.5/2.0 Flash API using backend/.env key
+// Arrange prompt via Gemini Flash API using backend/.env key
 aiRouter.post('/arrange', async (req, res) => {
-  const { prompt } = req.body
+  const { prompt, duration } = req.body || {}
+  const targetDuration = Math.max(10, Math.min(180, Number(duration) || 30))
   const apiKey = (process.env.GEMINI_API_KEY || '').trim()
 
+  console.log(`[Dramatone Backend] 🎼 New arrange request: "${prompt || 'Default'}" (Target length: ${targetDuration}s)`)
+
   if (!apiKey) {
+    console.warn('[Dramatone Backend] ⚠️ GEMINI_API_KEY not configured in backend/.env')
     return res.status(200).json({
       success: false,
       geminiConfigured: false,
@@ -22,26 +26,28 @@ aiRouter.post('/arrange', async (req, res) => {
     })
   }
 
-  const systemPrompt = `You are Dramatone AI, an elite Hollywood film composer, music theorist, and audio engineer.
-Given a director's scene or emotional prompt, you arrange a multi-stem musical score.
+  const systemPrompt = `You are Dramatone AI, an elite adaptive soundscape composer, music theorist, and audio engineer built for independent indie game developers, filmmakers, and podcast producers.
+Given a scene, gameplay state, podcast narrative beat, or emotional prompt, you arrange a multi-stem adaptive musical soundscape tailored to dynamic emotional pacing.
+Target composition duration: ${targetDuration} seconds.
 You MUST output valid, raw JSON only without markdown formatting.
 
 Format:
 {
   "title": "Short poetic title",
-  "genre": "Genre name (e.g. Cinematic Indie Score, Dark Orchestral, Cyberpunk)",
+  "genre": "Genre name (e.g. Indie Game OST, Cinematic Underscore, Cyberpunk Action, Atmospheric Podcast Ambience)",
   "mood": "Primary emotion (e.g. Hesitant & Tender, Melancholic, Tense, Heroic)",
   "bpm": number (between 60 and 140),
   "key": "Musical Key (e.g. D Minor, Bb Major)",
   "tension": number (0 to 100),
+  "durationSeconds": ${targetDuration},
   "leadInstrument": "keys" | "strings" | "pluck" | "trumpet" | "synth",
   "hasStrings": boolean,
   "hasRainFoley": boolean,
   "hasGradualBuild": boolean,
   "hasSubBass": boolean,
   "hasStaccato": boolean,
-  "diffusionPrompt": "A rich, evocative studio-grade acoustic prompt for Meta MusicGen / Stable Audio",
-  "explanation": "1 concise sentence explaining the music theory justification for this emotion",
+  "diffusionPrompt": "A rich, evocative studio-grade acoustic prompt for Meta MusicGen / Stable Audio (describe instruments, room acoustics, dialogue-friendly dynamic space, and emotional pacing)",
+  "explanation": "1 concise sentence explaining the musical theory and narrative/gameplay justification for this pacing",
   "chords": [
     [freq1, freq2, freq3, freq4],
     [freq1, freq2, freq3, freq4],
@@ -59,13 +65,15 @@ Format:
     "guitar": "Descriptive instrument name for melody/pluck",
     "vocal": "Descriptive instrument name for texture/foley"
   }
-}`
+}
+CRITICAL NOTE DISTRIBUTION:
+You MUST generate 16 to 32 note events distributed evenly across all 4 measures (steps 0 through 63: Measure 1: steps 0-15, Measure 2: steps 16-31, Measure 3: steps 32-47, Measure 4: steps 48-63). DO NOT stop generating after step 12! Ensure melodic and harmonic notes exist in every measure!`
 
   const body = {
     contents: [
       {
         role: 'user',
-        parts: [{ text: `${systemPrompt}\n\nDirector's Prompt: "${prompt || 'Cinematic Film Score'}"` }]
+        parts: [{ text: `${systemPrompt}\n\nCreator's Prompt: "${prompt || 'Adaptive Game & Narrative Soundscape'}"` }]
       }
     ],
     generationConfig: {
@@ -74,23 +82,30 @@ Format:
     }
   }
 
-  const candidateModels = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash']
+  const candidateModels = [
+    'gemini-3.1-flash-lite',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-flash-lite-latest'
+  ]
   let lastError = null
 
   for (const model of candidateModels) {
+    const startTime = Date.now()
     try {
+      console.log(`[Dramatone Backend] 🤖 Calling Gemini model: ${model}...`)
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(12000)
       })
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => ({}))
         const msg = errBody?.error?.message || response.statusText
-        console.warn(`Gemini model ${model} failed (${response.status}):`, msg)
+        console.warn(`[Dramatone Backend] ⚠️ Model ${model} failed (${response.status}): ${msg}`)
         lastError = `Gemini API ${response.status}: ${msg}`
         continue
       }
@@ -104,9 +119,12 @@ Format:
 
       const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
       const parsed = JSON.parse(cleaned)
+      parsed.durationSeconds = targetDuration
+      const elapsed = Date.now() - startTime
+      console.log(`[Dramatone Backend] ✅ Model ${model} generated score in ${elapsed}ms: "${parsed.title}" (${parsed.notes?.length || 0} notes across 4 measures)`)
       return res.json({ success: true, arrangement: parsed, model })
     } catch (err) {
-      console.warn(`Gemini model ${model} error:`, err.message)
+      console.warn(`[Dramatone Backend] ⚠️ Model ${model} error:`, err.message)
       lastError = err.message
     }
   }

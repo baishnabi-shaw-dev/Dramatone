@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, Wand2, Plus, Piano, Drum, Guitar, Mic2, Film, Scissors, Download, Save, Check, Layers, Trash2, ChevronDown, ChevronUp, LocateFixed, GripVertical, RotateCcw, Key, Copy } from 'lucide-react'
+import { Sparkles, Wand2, Plus, Piano, Drum, Guitar, Mic2, Film, Scissors, Download, Save, Check, Trash2, ChevronDown, ChevronUp, LocateFixed, GripVertical, RotateCcw, Key, Copy } from 'lucide-react'
 import { MainLayout } from '@/components/layout/MainLayout'
 import { AppRoute } from '@/components/layout/Sidebar'
-import { DawPianoRoll } from '@/components/daw/DawPianoRoll'
 import { audioEngine, StemId } from '@/services/audioEngine'
 import { apiClient } from '@/services/apiClient'
 import { soundscapeService } from '@/features/adaptive-soundscape/services/soundscapeService'
@@ -61,15 +60,17 @@ function generateStemBars(stemType: string, notes?: Array<{ step: number; stem?:
 export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) {
   const [promptText, setPromptText] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
+  const [selectedDuration, setSelectedDuration] = useState<number>(() => audioEngine.getTimelineDuration() || 30)
   const [playhead, setPlayhead] = useState(0)
   const [stems, setStems] = useState<StemTrack[]>(() => {
     const hasComp = audioEngine.hasComposition()
     const notes = audioEngine.getActiveNotes()
+    const engineStems = audioEngine.getStems()
     return [
-      { id: 'keys', name: 'Keys / Harmony', type: 'keys', volume: 80, muted: false, solo: false, bars: hasComp ? generateStemBars('keys', notes) : [] },
-      { id: 'drums', name: 'Neural Drums', type: 'drums', volume: 80, muted: false, solo: false, bars: hasComp ? generateStemBars('drums', notes) : [] },
-      { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', volume: 75, muted: false, solo: false, bars: hasComp ? generateStemBars('guitar', notes) : [] },
-      { id: 'vocal', name: 'Atmosphere / Texture', type: 'vocal', volume: 70, muted: false, solo: false, bars: hasComp ? generateStemBars('vocal', notes) : [] }
+      { id: 'keys', name: 'Keys / Harmony', type: 'keys', volume: engineStems.keys?.volume ?? 80, muted: engineStems.keys?.muted ?? false, solo: engineStems.keys?.solo ?? false, bars: hasComp ? generateStemBars('keys', notes) : [] },
+      { id: 'drums', name: 'Neural Drums', type: 'drums', volume: engineStems.drums?.volume ?? 80, muted: engineStems.drums?.muted ?? false, solo: engineStems.drums?.solo ?? false, bars: hasComp ? generateStemBars('drums', notes) : [] },
+      { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', volume: engineStems.guitar?.volume ?? 75, muted: engineStems.guitar?.muted ?? false, solo: engineStems.guitar?.solo ?? false, bars: hasComp ? generateStemBars('guitar', notes) : [] },
+      { id: 'vocal', name: 'Atmosphere / Texture', type: 'vocal', volume: engineStems.vocal?.volume ?? 70, muted: engineStems.vocal?.muted ?? false, solo: engineStems.vocal?.solo ?? false, bars: hasComp ? generateStemBars('vocal', notes) : [] }
     ]
   })
 
@@ -80,7 +81,6 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
-  const [viewMode, setViewMode] = useState<'stems' | 'piano-roll'>('stems')
   const [isPromptCollapsed, setIsPromptCollapsed] = useState(false)
   const [followSlider, setFollowSlider] = useState(true)
 
@@ -163,7 +163,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
       let arranged: ArrangedComposition
 
       try {
-        arranged = await geminiArrangerService.arrangeMusic(promptToUse)
+        arranged = await geminiArrangerService.arrangeMusic(promptToUse, selectedDuration)
         setGeminiError(null)
       } catch (geminiErr: any) {
         console.warn('Gemini arrangement failed, falling back to procedural:', geminiErr)
@@ -171,12 +171,23 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         setGeminiError(errMsg)
         setSplitNotice(`⚠️ ${errMsg} — generated via procedural arranger`)
         setTimeout(() => setSplitNotice(null), 4500)
-        arranged = geminiArrangerService.proceduralArranger(promptToUse)
+        arranged = geminiArrangerService.proceduralArranger(promptToUse, selectedDuration)
       }
 
       setAiArrangement(arranged)
 
       // 1. Direct load into audio engine with synthesized profile
+      const finalDuration = arranged.durationSeconds || selectedDuration
+      console.log('%c[Studio DAW] 🎛️ Loaded arrangement into AudioEngine:', 'color: #3b82f6; font-weight: bold', {
+        title: arranged.title,
+        genre: arranged.genre,
+        bpm: arranged.bpm,
+        key: arranged.key,
+        tension: arranged.tension,
+        duration: `${finalDuration}s`,
+        notesCount: arranged.notes?.length || 0
+      })
+
       audioEngine.loadDirectProfile(
         {
           genre: arranged.genre,
@@ -193,11 +204,13 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
           chords: arranged.chords,
           scale: arranged.scale,
           bassFreqs: arranged.bassFreqs,
-          durationSeconds: arranged.durationSeconds || 180
+          durationSeconds: finalDuration
         },
         arranged.tension
       )
+      audioEngine.setTimelineDuration(finalDuration)
       audioEngine.setActiveNotes(arranged.notes)
+      console.log(`[Studio DAW] 🎹 Synchronized ${arranged.notes?.length || 0} notes across 64-step DAW grid; Timeline scaled to ${finalDuration}s`)
 
       // 2. Dispatch event to populate DAW Piano Roll with 64-step note blocks
       if (typeof window !== 'undefined') {
@@ -630,15 +643,40 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
                 ))}
               </div>
 
-              <button
-                onClick={handleGenerate}
-                disabled={isGenerating}
-                className={`px-4 py-1.5 rounded-full bg-gradient-to-r hover:brightness-110 font-semibold text-xs transition cursor-pointer flex items-center gap-1.5 ${isDark ? 'from-orange-500 to-amber-500 text-zinc-950' : 'from-sky-500 via-indigo-500 to-violet-500 text-white'
-                  }`}
-              >
-                <Wand2 className="w-3.5 h-3.5" />
-                <span>{isGenerating ? 'Arranging AI Score...' : 'Generate Stems'}</span>
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className={`flex items-center gap-1 p-0.5 rounded-xl border text-[10px] ${
+                  isDark ? 'border-white/10 bg-black/40' : 'border-slate-200 bg-slate-100'
+                }`}>
+                  <span className={`text-[10px] font-bold px-1.5 ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>Length:</span>
+                  {[15, 30, 60, 90, 120, 180].map((dur) => (
+                    <button
+                      key={dur}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDuration(dur)
+                        audioEngine.setTimelineDuration(dur)
+                      }}
+                      className={`px-2 py-0.5 rounded-lg font-mono font-bold transition cursor-pointer ${
+                        selectedDuration === dur
+                          ? isDark ? 'bg-orange-500 text-zinc-950 shadow-sm' : 'bg-indigo-600 text-white shadow-sm'
+                          : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {dur}s
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={handleGenerate}
+                  disabled={isGenerating}
+                  className={`px-4 py-1.5 rounded-full bg-gradient-to-r hover:brightness-110 font-semibold text-xs transition cursor-pointer flex items-center gap-1.5 ${isDark ? 'from-orange-500 to-amber-500 text-zinc-950' : 'from-sky-500 via-indigo-500 to-violet-500 text-white'
+                    }`}
+                >
+                  <Wand2 className="w-3.5 h-3.5" />
+                  <span>{isGenerating ? 'Arranging AI Score...' : `Generate ${selectedDuration}s Stems`}</span>
+                </button>
+              </div>
             </div>
 
             {aiArrangement && (
@@ -698,30 +736,16 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         {/* Timeline Ruler & Split Toolbar */}
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/10">
           <div className="flex flex-wrap items-center gap-2">
-            {/* View Switcher: Stems vs DAW Piano Roll */}
-            <div className={`flex items-center gap-1 p-0.5 rounded-xl border text-[10px] ${isDark ? 'border-white/10 bg-black/40' : 'border-slate-200 bg-slate-100'
-              }`}>
-              <button
-                onClick={() => setViewMode('stems')}
-                className={`px-2 py-0.5 rounded-lg font-semibold flex items-center gap-1 cursor-pointer transition ${viewMode === 'stems'
-                    ? isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
-                    : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-600 hover:text-slate-950'
-                  }`}
-              >
-                <Layers className="w-3 h-3" />
-                Stems View
-              </button>
-              <button
-                onClick={() => setViewMode('piano-roll')}
-                className={`px-2 py-0.5 rounded-lg font-semibold flex items-center gap-1 cursor-pointer transition ${viewMode === 'piano-roll'
-                    ? isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
-                    : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-600 hover:text-slate-950'
-                  }`}
-              >
-                <Piano className="w-3 h-3" />
-                DAW Roll &amp; MIDI Studio
-              </button>
-            </div>
+            <button
+              onClick={() => onNavigate('daw')}
+              title="Open full-screen DAW Roll & MIDI Studio"
+              className={`px-2.5 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 cursor-pointer transition ${
+                isDark ? 'border-white/10 bg-white/5 text-zinc-300 hover:text-white hover:border-orange-500/40' : 'border-slate-300 bg-white text-slate-700 hover:border-indigo-400'
+              }`}
+            >
+              <Piano className="w-3 h-3 text-orange-400" />
+              <span>DAW Roll</span>
+            </button>
 
             <button
               onClick={handleSplitAtPlayhead}
@@ -854,11 +878,8 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         </div>
       </div>
 
-      {/* Tracks Stack or DAW Piano Roll */}
-      {viewMode === 'piano-roll' ? (
-        <DawPianoRoll isDark={isDark} showFullHeader={true} className="my-1 flex-1 min-h-[440px]" />
-      ) : (
-        <div ref={timelineTracksRef} className="space-y-1.5 overflow-y-auto flex-1 min-h-0">
+      {/* Multi-Track Stems Stack */}
+      <div ref={timelineTracksRef} className="space-y-1.5 overflow-y-auto flex-1 min-h-0">
           {/* Video Track Lane */}
           <div className={`p-2 rounded-2xl border flex items-center gap-3 ${isDark ? 'border-orange-500/30 bg-orange-500/10' : 'border-indigo-400/40 bg-indigo-500/10'
             }`}>
@@ -1054,8 +1075,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
               </div>
             </div>
           ))}
-          </div>
-        )}
+        </div>
       </div>
     </MainLayout>
   )

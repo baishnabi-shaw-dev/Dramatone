@@ -202,13 +202,24 @@ const GENRE_PROFILES: Record<string, GenreProfile> = {
 
 export type DawInstrument =
   | 'keys'
+  | 'piano'
   | 'epiano'
-  | 'trumpet'
   | 'guitar'
+  | 'electricGuitar'
+  | 'harp'
+  | 'pluck'
+  | 'violin'
+  | 'cello'
   | 'strings'
-  | 'bass'
+  | 'trumpet'
+  | 'saxophone'
   | 'flute'
+  | 'bass'
+  | 'bassGuitar'
+  | 'subBass'
   | 'synth'
+  | 'synthLead'
+  | 'pad'
   | 'percussion'
 
 class AudioEngine {
@@ -269,18 +280,31 @@ class AudioEngine {
     tension: 50
   }
 
-  private stems: Record<StemId, StemConfig> = {
-    keys: { id: 'keys', name: 'Keys', muted: false, solo: false, volume: 80 },
-    drums: { id: 'drums', name: 'Drums', muted: false, solo: false, volume: 80 },
-    guitar: { id: 'guitar', name: 'Pluck', muted: false, solo: false, volume: 75 },
-    vocal: { id: 'vocal', name: 'Texture', muted: false, solo: false, volume: 70 }
-  }
+  private stems: Record<StemId, StemConfig> = typeof window !== 'undefined' && localStorage.getItem('dramatone_stems')
+    ? (() => {
+        try {
+          const parsed = JSON.parse(localStorage.getItem('dramatone_stems')!)
+          if (parsed && typeof parsed === 'object') return parsed
+        } catch {}
+        return {
+          keys: { id: 'keys', name: 'Keys', muted: false, solo: false, volume: 80 },
+          drums: { id: 'drums', name: 'Drums', muted: false, solo: false, volume: 80 },
+          guitar: { id: 'guitar', name: 'Pluck', muted: false, solo: false, volume: 75 },
+          vocal: { id: 'vocal', name: 'Texture', muted: false, solo: false, volume: 70 }
+        }
+      })()
+    : {
+        keys: { id: 'keys', name: 'Keys', muted: false, solo: false, volume: 80 },
+        drums: { id: 'drums', name: 'Drums', muted: false, solo: false, volume: 80 },
+        guitar: { id: 'guitar', name: 'Pluck', muted: false, solo: false, volume: 75 },
+        vocal: { id: 'vocal', name: 'Texture', muted: false, solo: false, volume: 70 }
+      }
 
   private dialogueDuckingEnabled = true
   private scaleFrequencies = [...GENRE_PROFILES.ambient.scale]
   private onStepCallback: ((step: number) => void) | null = null
   private stepListeners: Set<(step: number) => void> = new Set()
-  private timelineDuration = 180 // 3-minute timeline in seconds
+  private timelineDuration = 30 // default 30-second timeline (customizable up to 180s)
   private elapsedSeconds = 0
   private timelineListeners: Set<(percent: number, elapsedSeconds: number) => void> = new Set()
   private playbackListeners: Set<(isPlaying: boolean) => void> = new Set()
@@ -439,6 +463,17 @@ class AudioEngine {
     if (this.rawDawGain && this.ctx) {
       this.rawDawGain.gain.setTargetAtTime(Math.max(0, Math.min(1.5, val)), this.ctx.currentTime, 0.02)
     }
+  }
+
+  // FL Studio-style Channel Solo Mode: Isolates raw instrument voices, mutes background AI accompaniment
+  private isDawSolo = false
+
+  public setDawSolo(solo: boolean) {
+    this.isDawSolo = solo
+  }
+
+  public getDawSolo(): boolean {
+    return this.isDawSolo
   }
 
   // Generate synthetic stereo exponential decay impulse response for cinematic hall reverb
@@ -653,9 +688,18 @@ class AudioEngine {
   }
 
   // Stem Controls
+  private saveStemsToStorage() {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('dramatone_stems', JSON.stringify(this.stems))
+      } catch {}
+    }
+  }
+
   public setStemMute(stemId: StemId, muted: boolean) {
     if (this.stems[stemId]) {
       this.stems[stemId].muted = muted
+      this.saveStemsToStorage()
       this.updateAudioRouting()
     }
   }
@@ -663,6 +707,7 @@ class AudioEngine {
   public setStemSolo(stemId: StemId, solo: boolean) {
     if (this.stems[stemId]) {
       this.stems[stemId].solo = solo
+      this.saveStemsToStorage()
       this.updateAudioRouting()
     }
   }
@@ -670,6 +715,7 @@ class AudioEngine {
   public setStemVolume(stemId: StemId, volume: number) {
     if (this.stems[stemId]) {
       this.stems[stemId].volume = Math.max(0, Math.min(100, volume))
+      this.saveStemsToStorage()
       this.updateAudioRouting()
     }
   }
@@ -1151,26 +1197,18 @@ class AudioEngine {
     midiNote: number,
     duration = 0.4,
     velocity = 0.8,
-    instrument: DawInstrument = 'keys'
+    instrument: DawInstrument = 'piano'
   ) {
     this.ensureContext()
     if (!this.ctx) return
     const freq = this.midiToFreq(midiNote)
     const time = this.ctx.currentTime
     const vel = Math.max(0.1, Math.min(1.0, velocity))
-    let targetGain: GainNode | null = this.rawDawGain || this.masterGain
-    if (instrument === 'keys' || instrument === 'epiano' || instrument === 'strings') {
-      targetGain = this.stemGains.keys || targetGain
-    } else if (instrument === 'percussion') {
-      targetGain = this.stemGains.drums || targetGain
-    } else if (instrument === 'guitar' || instrument === 'trumpet' || instrument === 'flute' || instrument === 'synth') {
-      targetGain = this.stemGains.guitar || targetGain
-    } else if (instrument === 'bass') {
-      targetGain = this.stemGains.keys || targetGain
-    }
+    // Direct Master DAW bus ensures raw voices play at full clarity without stem muffling
+    const targetGain: GainNode | null = this.rawDawGain || this.masterGain
     if (!targetGain) return
 
-    if (instrument === 'keys') {
+    if (instrument === 'keys' || instrument === 'piano') {
       // 1. Raw Acoustic Grand Piano: Fundamental triangle + 2nd harmonic sine + hammer transient
       const osc1 = this.ctx.createOscillator()
       const osc2 = this.ctx.createOscillator()
@@ -1184,7 +1222,7 @@ class AudioEngine {
       osc2.frequency.setValueAtTime(freq * 2, time)
 
       filter.type = 'lowpass'
-      filter.frequency.setValueAtTime(Math.min(5000, freq * 3.5), time)
+      filter.frequency.setValueAtTime(Math.min(5200, freq * 3.5), time)
       filter.frequency.exponentialRampToValueAtTime(Math.max(200, freq * 1.2), time + duration)
 
       gain.gain.setValueAtTime(0.001, time)
@@ -1250,8 +1288,174 @@ class AudioEngine {
       osc1.stop(time + duration + 0.15)
       osc2.stop(time + duration + 0.15)
       oscTine.stop(time + 0.1)
+    } else if (instrument === 'guitar') {
+      // 3. Raw Acoustic Guitar: Triangle body + fast lowpass string damping + acoustic bite
+      const osc = this.ctx.createOscillator()
+      const filter = this.ctx.createBiquadFilter()
+      const gain = this.ctx.createGain()
+
+      osc.type = 'triangle'
+      osc.frequency.setValueAtTime(freq, time)
+
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(Math.min(7000, freq * 4.5), time)
+      filter.frequency.exponentialRampToValueAtTime(Math.max(160, freq * 0.9), time + 0.22)
+
+      gain.gain.setValueAtTime(0.001, time)
+      gain.gain.linearRampToValueAtTime(0.32 * vel, time + 0.005)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + Math.max(0.3, duration))
+
+      osc.connect(filter)
+      filter.connect(gain)
+      gain.connect(targetGain)
+
+      osc.start(time)
+      osc.stop(time + Math.max(0.32, duration + 0.05))
+    } else if (instrument === 'electricGuitar') {
+      // 4. Raw Electric Guitar: Dual detuned saw with tube waveshaping distortion & cabinet simulation
+      const osc1 = this.ctx.createOscillator()
+      const osc2 = this.ctx.createOscillator()
+      const shaper = this.ctx.createWaveShaper()
+      const cabFilter = this.ctx.createBiquadFilter()
+      const gain = this.ctx.createGain()
+
+      const curve = new Float32Array(256)
+      for (let i = 0; i < 256; i++) {
+        const x = (i * 2) / 256 - 1
+        curve[i] = (1.5 * x) / (1 + 0.6 * Math.abs(x))
+      }
+      shaper.curve = curve
+
+      osc1.type = 'sawtooth'
+      osc2.type = 'sawtooth'
+      osc1.frequency.setValueAtTime(freq, time)
+      osc2.frequency.setValueAtTime(freq, time)
+      osc1.detune.setValueAtTime(-5, time)
+      osc2.detune.setValueAtTime(5, time)
+
+      cabFilter.type = 'bandpass'
+      cabFilter.frequency.setValueAtTime(1900, time)
+      cabFilter.Q.setValueAtTime(1.8, time)
+
+      gain.gain.setValueAtTime(0.001, time)
+      gain.gain.linearRampToValueAtTime(0.24 * vel, time + 0.01)
+      gain.gain.setValueAtTime(0.2 * vel, time + duration - 0.05)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration + 0.1)
+
+      osc1.connect(shaper)
+      osc2.connect(shaper)
+      shaper.connect(cabFilter)
+      cabFilter.connect(gain)
+      gain.connect(targetGain)
+
+      osc1.start(time)
+      osc2.start(time)
+      osc1.stop(time + duration + 0.12)
+      osc2.stop(time + duration + 0.12)
+    } else if (instrument === 'violin') {
+      // 5. Raw Solo Bowed Violin: Sawtooth + body peaking formant (2900Hz) + delayed 5.6Hz vibrato
+      const osc = this.ctx.createOscillator()
+      const filter = this.ctx.createBiquadFilter()
+      const gain = this.ctx.createGain()
+      const vibrato = this.ctx.createOscillator()
+      const vibratoGain = this.ctx.createGain()
+
+      osc.type = 'sawtooth'
+      osc.frequency.setValueAtTime(freq, time)
+
+      filter.type = 'peaking'
+      filter.frequency.setValueAtTime(2900, time)
+      filter.Q.setValueAtTime(2.5, time)
+      filter.gain.setValueAtTime(6.0, time)
+
+      vibrato.frequency.setValueAtTime(5.6, time)
+      vibratoGain.gain.setValueAtTime(0, time)
+      vibratoGain.gain.setValueAtTime(0, time + 0.06)
+      vibratoGain.gain.linearRampToValueAtTime(freq * 0.018, time + 0.22)
+      vibrato.connect(vibratoGain)
+      vibratoGain.connect(osc.frequency)
+
+      gain.gain.setValueAtTime(0.001, time)
+      gain.gain.linearRampToValueAtTime(0.25 * vel, time + 0.065) // Gentle bow attack
+      gain.gain.setValueAtTime(0.22 * vel, time + duration - 0.04)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration + 0.18)
+
+      osc.connect(filter)
+      filter.connect(gain)
+      gain.connect(targetGain)
+
+      vibrato.start(time)
+      osc.start(time)
+      vibrato.stop(time + duration + 0.2)
+      osc.stop(time + duration + 0.2)
+    } else if (instrument === 'cello') {
+      // 6. Raw Solo Bowed Cello: Deep rich sawtooth + woody cavity lowpass + slow 4.6Hz vibrato
+      const celloFreq = freq > 220 ? freq / 2 : freq
+      const osc = this.ctx.createOscillator()
+      const filter = this.ctx.createBiquadFilter()
+      const gain = this.ctx.createGain()
+      const vibrato = this.ctx.createOscillator()
+      const vibratoGain = this.ctx.createGain()
+
+      osc.type = 'sawtooth'
+      osc.frequency.setValueAtTime(celloFreq, time)
+
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(Math.min(2200, celloFreq * 4.0), time)
+
+      vibrato.frequency.setValueAtTime(4.6, time)
+      vibratoGain.gain.setValueAtTime(0, time)
+      vibratoGain.gain.setValueAtTime(0, time + 0.09)
+      vibratoGain.gain.linearRampToValueAtTime(celloFreq * 0.014, time + 0.28)
+      vibrato.connect(vibratoGain)
+      vibratoGain.connect(osc.frequency)
+
+      gain.gain.setValueAtTime(0.001, time)
+      gain.gain.linearRampToValueAtTime(0.28 * vel, time + 0.085)
+      gain.gain.setValueAtTime(0.24 * vel, time + duration - 0.05)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration + 0.25)
+
+      osc.connect(filter)
+      filter.connect(gain)
+      gain.connect(targetGain)
+
+      vibrato.start(time)
+      osc.start(time)
+      vibrato.stop(time + duration + 0.3)
+      osc.stop(time + duration + 0.3)
+    } else if (instrument === 'strings') {
+      // 7. Raw Orchestral Strings: Dual detuned saw (-9/+9 cents) + soft ensemble bow attack
+      const osc1 = this.ctx.createOscillator()
+      const osc2 = this.ctx.createOscillator()
+      const filter = this.ctx.createBiquadFilter()
+      const gain = this.ctx.createGain()
+
+      osc1.type = 'sawtooth'
+      osc2.type = 'sawtooth'
+      osc1.frequency.setValueAtTime(freq, time)
+      osc2.frequency.setValueAtTime(freq, time)
+      osc1.detune.setValueAtTime(-9, time)
+      osc2.detune.setValueAtTime(9, time)
+
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(Math.min(4800, freq * 3.5), time)
+
+      gain.gain.setValueAtTime(0.001, time)
+      gain.gain.linearRampToValueAtTime(0.22 * vel, time + 0.08)
+      gain.gain.setValueAtTime(0.2 * vel, time + duration - 0.04)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration + 0.25)
+
+      osc1.connect(filter)
+      osc2.connect(filter)
+      filter.connect(gain)
+      gain.connect(targetGain)
+
+      osc1.start(time)
+      osc2.start(time)
+      osc1.stop(time + duration + 0.3)
+      osc2.stop(time + duration + 0.3)
     } else if (instrument === 'trumpet') {
-      // 3. Raw Brass & Solo Trumpet: Sawtooth wave + formant sweep + delayed 5.5Hz vibrato
+      // 8. Raw Solo Brass & Trumpet: Sawtooth wave + formant sweep + delayed 5.5Hz vibrato
       const osc = this.ctx.createOscillator()
       const filter = this.ctx.createBiquadFilter()
       const gain = this.ctx.createGain()
@@ -1287,83 +1491,50 @@ class AudioEngine {
       osc.start(time)
       vibrato.stop(time + duration + 0.05)
       osc.stop(time + duration + 0.05)
-    } else if (instrument === 'strings') {
-      // 4. Raw Orchestral Strings: Dual detuned saw (-8/+8 cents) + soft bow attack
+    } else if (instrument === 'saxophone') {
+      // 9. Raw Solo Saxophone: Square + sawtooth reed resonance with 1300Hz formant & 5.2Hz vibrato
       const osc1 = this.ctx.createOscillator()
       const osc2 = this.ctx.createOscillator()
       const filter = this.ctx.createBiquadFilter()
       const gain = this.ctx.createGain()
+      const vibrato = this.ctx.createOscillator()
+      const vibratoGain = this.ctx.createGain()
 
-      osc1.type = 'sawtooth'
-      osc2.type = 'sawtooth'
+      osc1.type = 'square'
       osc1.frequency.setValueAtTime(freq, time)
+      osc2.type = 'sawtooth'
       osc2.frequency.setValueAtTime(freq, time)
-      osc1.detune.setValueAtTime(-8, time)
-      osc2.detune.setValueAtTime(8, time)
 
-      filter.type = 'lowpass'
-      filter.frequency.setValueAtTime(Math.min(4800, freq * 3.5), time)
+      filter.type = 'bandpass'
+      filter.frequency.setValueAtTime(1300, time)
+      filter.Q.setValueAtTime(2.2, time)
+
+      vibrato.frequency.setValueAtTime(5.2, time)
+      vibratoGain.gain.setValueAtTime(0, time)
+      vibratoGain.gain.setValueAtTime(0, time + 0.07)
+      vibratoGain.gain.linearRampToValueAtTime(freq * 0.015, time + 0.22)
+      vibrato.connect(vibratoGain)
+      vibratoGain.connect(osc1.frequency)
+      vibratoGain.connect(osc2.frequency)
 
       gain.gain.setValueAtTime(0.001, time)
-      gain.gain.linearRampToValueAtTime(0.22 * vel, time + 0.08)
-      gain.gain.setValueAtTime(0.2 * vel, time + duration - 0.04)
-      gain.gain.exponentialRampToValueAtTime(0.001, time + duration + 0.25)
+      gain.gain.linearRampToValueAtTime(0.26 * vel, time + 0.035)
+      gain.gain.setValueAtTime(0.22 * vel, time + duration - 0.03)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration + 0.08)
 
       osc1.connect(filter)
       osc2.connect(filter)
       filter.connect(gain)
       gain.connect(targetGain)
 
+      vibrato.start(time)
       osc1.start(time)
       osc2.start(time)
-      osc1.stop(time + duration + 0.3)
-      osc2.stop(time + duration + 0.3)
-    } else if (instrument === 'guitar') {
-      // 5. Raw Acoustic Guitar: Triangle body + rapid lowpass string damping
-      const osc = this.ctx.createOscillator()
-      const filter = this.ctx.createBiquadFilter()
-      const gain = this.ctx.createGain()
-
-      osc.type = 'triangle'
-      osc.frequency.setValueAtTime(freq, time)
-
-      filter.type = 'lowpass'
-      filter.frequency.setValueAtTime(Math.min(7000, freq * 4.5), time)
-      filter.frequency.exponentialRampToValueAtTime(Math.max(160, freq * 0.9), time + 0.22)
-
-      gain.gain.setValueAtTime(0.001, time)
-      gain.gain.linearRampToValueAtTime(0.3 * vel, time + 0.005)
-      gain.gain.exponentialRampToValueAtTime(0.001, time + Math.max(0.28, duration))
-
-      osc.connect(filter)
-      filter.connect(gain)
-      gain.connect(targetGain)
-
-      osc.start(time)
-      osc.stop(time + Math.max(0.3, duration + 0.05))
-    } else if (instrument === 'bass') {
-      // 6. Raw 808 Sub-Bass: Pitch dive into deep sub fundamental (30-65Hz)
-      const osc = this.ctx.createOscillator()
-      const gain = this.ctx.createGain()
-
-      osc.type = 'sine'
-      let subFreq = freq
-      while (subFreq > 130) subFreq /= 2
-      subFreq = Math.max(30, subFreq)
-      osc.frequency.setValueAtTime(subFreq * 1.5, time)
-      osc.frequency.exponentialRampToValueAtTime(subFreq, time + 0.06)
-
-      gain.gain.setValueAtTime(0.001, time)
-      gain.gain.linearRampToValueAtTime(0.4 * vel, time + 0.012)
-      gain.gain.exponentialRampToValueAtTime(0.001, time + duration * 1.3)
-
-      osc.connect(gain)
-      gain.connect(targetGain)
-
-      osc.start(time)
-      osc.stop(time + duration * 1.35)
+      vibrato.stop(time + duration + 0.1)
+      osc1.stop(time + duration + 0.1)
+      osc2.stop(time + duration + 0.1)
     } else if (instrument === 'flute') {
-      // 7. Raw Concert Flute: Pure sine + natural 5.0Hz vibrato + breath swell
+      // 10. Raw Concert Flute: Pure sine + natural 5.0Hz vibrato + breath swell
       const osc = this.ctx.createOscillator()
       const vibrato = this.ctx.createOscillator()
       const vibratoGain = this.ctx.createGain()
@@ -1389,13 +1560,94 @@ class AudioEngine {
       osc.start(time)
       vibrato.stop(time + duration + 0.15)
       osc.stop(time + duration + 0.15)
-    } else if (instrument === 'synth') {
-      // 8. Raw Analog Cyber Synth: Square wave + high-resonance filter sweep
+    } else if (instrument === 'harp' || instrument === 'pluck') {
+      // 11. Raw Celtic Harp & Pluck: Triangle + overtone sine with fast damping crystalline filter
+      const osc1 = this.ctx.createOscillator()
+      const osc2 = this.ctx.createOscillator()
+      const filter = this.ctx.createBiquadFilter()
+      const gain = this.ctx.createGain()
+
+      osc1.type = 'triangle'
+      osc1.frequency.setValueAtTime(freq, time)
+      osc2.type = 'sine'
+      osc2.frequency.setValueAtTime(freq * 3, time)
+
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(8000, time)
+      filter.frequency.exponentialRampToValueAtTime(Math.max(220, freq * 1.2), time + 0.15)
+
+      gain.gain.setValueAtTime(0.001, time)
+      gain.gain.linearRampToValueAtTime(0.3 * vel, time + 0.003)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + Math.max(0.35, duration))
+
+      osc1.connect(filter)
+      osc2.connect(filter)
+      filter.connect(gain)
+      gain.connect(targetGain)
+
+      osc1.start(time)
+      osc2.start(time)
+      osc1.stop(time + Math.max(0.38, duration + 0.05))
+      osc2.stop(time + Math.max(0.38, duration + 0.05))
+    } else if (instrument === 'bassGuitar') {
+      // 12. Raw Electric Bass Guitar: Warm low octave punch (triangle + sine) + pluck bite
+      let bassFreq = freq
+      while (bassFreq > 200) bassFreq /= 2
+      const osc1 = this.ctx.createOscillator()
+      const osc2 = this.ctx.createOscillator()
+      const filter = this.ctx.createBiquadFilter()
+      const gain = this.ctx.createGain()
+
+      osc1.type = 'triangle'
+      osc1.frequency.setValueAtTime(bassFreq, time)
+      osc2.type = 'sine'
+      osc2.frequency.setValueAtTime(bassFreq * 2, time)
+
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(1600, time)
+      filter.frequency.exponentialRampToValueAtTime(320, time + 0.12)
+
+      gain.gain.setValueAtTime(0.001, time)
+      gain.gain.linearRampToValueAtTime(0.35 * vel, time + 0.008)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + Math.max(0.35, duration))
+
+      osc1.connect(filter)
+      osc2.connect(filter)
+      filter.connect(gain)
+      gain.connect(targetGain)
+
+      osc1.start(time)
+      osc2.start(time)
+      osc1.stop(time + Math.max(0.38, duration + 0.05))
+      osc2.stop(time + Math.max(0.38, duration + 0.05))
+    } else if (instrument === 'subBass' || instrument === 'bass') {
+      // 13. Raw 808 Sub-Bass: Pitch dive into deep sub fundamental (30-65Hz)
+      const osc = this.ctx.createOscillator()
+      const gain = this.ctx.createGain()
+
+      osc.type = 'sine'
+      let subFreq = freq
+      while (subFreq > 130) subFreq /= 2
+      subFreq = Math.max(30, subFreq)
+      osc.frequency.setValueAtTime(subFreq * 1.5, time)
+      osc.frequency.exponentialRampToValueAtTime(subFreq, time + 0.06)
+
+      gain.gain.setValueAtTime(0.001, time)
+      gain.gain.linearRampToValueAtTime(0.4 * vel, time + 0.012)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration * 1.3)
+
+      osc.connect(gain)
+      gain.connect(targetGain)
+
+      osc.start(time)
+      osc.stop(time + duration * 1.35)
+    } else if (instrument === 'synthLead' || instrument === 'synth') {
+      // 14. Raw Moog Analog Synth Lead: Sawtooth wave + high-resonance filter sweep
       const osc = this.ctx.createOscillator()
       const filter = this.ctx.createBiquadFilter()
       const gain = this.ctx.createGain()
 
-      osc.type = 'square'
+      osc.type = 'sawtooth'
       osc.frequency.setValueAtTime(freq, time)
 
       filter.type = 'lowpass'
@@ -1404,7 +1656,7 @@ class AudioEngine {
       filter.frequency.exponentialRampToValueAtTime(Math.max(220, freq * 1.1), time + duration)
 
       gain.gain.setValueAtTime(0.001, time)
-      gain.gain.linearRampToValueAtTime(0.2 * vel, time + 0.015)
+      gain.gain.linearRampToValueAtTime(0.24 * vel, time + 0.015)
       gain.gain.exponentialRampToValueAtTime(0.001, time + duration)
 
       osc.connect(filter)
@@ -1413,12 +1665,41 @@ class AudioEngine {
 
       osc.start(time)
       osc.stop(time + duration + 0.05)
+    } else if (instrument === 'pad') {
+      // 15. Raw Ambient Celestial Pad: Dual detuned sine + triangle with slow lush 220ms swell
+      const osc1 = this.ctx.createOscillator()
+      const osc2 = this.ctx.createOscillator()
+      const filter = this.ctx.createBiquadFilter()
+      const gain = this.ctx.createGain()
+
+      osc1.type = 'triangle'
+      osc2.type = 'sine'
+      osc1.frequency.setValueAtTime(freq, time)
+      osc2.frequency.setValueAtTime(freq, time)
+      osc1.detune.setValueAtTime(-12, time)
+      osc2.detune.setValueAtTime(12, time)
+
+      filter.type = 'lowpass'
+      filter.frequency.setValueAtTime(2600, time)
+
+      gain.gain.setValueAtTime(0.001, time)
+      gain.gain.linearRampToValueAtTime(0.2 * vel, time + 0.22)
+      gain.gain.setValueAtTime(0.18 * vel, time + duration - 0.05)
+      gain.gain.exponentialRampToValueAtTime(0.001, time + duration + 0.4)
+
+      osc1.connect(filter)
+      osc2.connect(filter)
+      filter.connect(gain)
+      gain.connect(targetGain)
+
+      osc1.start(time)
+      osc2.start(time)
+      osc1.stop(time + duration + 0.45)
+      osc2.stop(time + duration + 0.45)
     } else if (instrument === 'percussion') {
-      // 9. Raw Drum Kit & Foley: Pitch-mapped across piano keyboard
-      // Low (C3-F3, <54): Punchy 808 Kick Drum
-      // Mid (F#3-F4, 54-65): Snappy Snare Drum with noise burst
-      // High (F#4-C5, 66+): Crisp Hi-Hat / Foley Click
+      // 16. Raw Drum Kit & Foley: Pitch-mapped across piano keyboard
       if (midiNote < 54) {
+        // Low: 808 Sub Kick
         const osc = this.ctx.createOscillator()
         const gain = this.ctx.createGain()
         osc.type = 'sine'
@@ -1431,6 +1712,7 @@ class AudioEngine {
         osc.start(time)
         osc.stop(time + 0.25)
       } else if (midiNote <= 65) {
+        // Mid: Snappy Snare Drum
         const tone = this.ctx.createOscillator()
         const toneGain = this.ctx.createGain()
         tone.type = 'triangle'
@@ -1459,6 +1741,7 @@ class AudioEngine {
           noise.stop(time + 0.15)
         }
       } else {
+        // High: Metallic Hi-Hat
         if (this.noiseBuffer) {
           const noise = this.ctx.createBufferSource()
           noise.buffer = this.noiseBuffer
@@ -1557,19 +1840,28 @@ class AudioEngine {
     }
 
     // Continuous ambient rain Foley (rustling raindrops and micro droplet pings)
-    if (this.hasRainFoley && step % 4 === 0) {
+    if (!this.isDawSolo && this.hasRainFoley && step % 4 === 0) {
       const intensity = this.hasGradualBuild ? 0.2 + (step / this.maxSteps) * 0.25 : 0.25
       this.playRainFoley(time, stepDuration * 4.2, intensity)
     }
 
-    // 1. Play active notes placed in DAW Piano Roll or arranged by Gemini AI (Fix 1)
+    // 1. Play active notes placed in DAW Piano Roll or arranged by Gemini AI
     if (this.activeNotes.length > 0) {
-      const stepNotes = this.activeNotes.filter((n) => n.step === step)
+      const stepNotes = this.activeNotes.filter((n) => (n.step % this.maxSteps) === step)
       stepNotes.forEach((n) => {
-        const inst: DawInstrument = n.instrument || (this.activeProfile.leadInstrument as DawInstrument) || 'keys'
+        const inst: DawInstrument = n.instrument || (this.activeProfile.leadInstrument as DawInstrument) || 'piano'
         const dur = (n.duration || 1) * stepDuration * 0.95
         this.playMidiNote(n.midi, dur, 0.85, inst)
       })
+    }
+
+    // FL Studio Channel Solo: Mute generative accompaniment so raw instrument notes play in pure solo isolation
+    if (this.isDawSolo) {
+      this.currentStep = (this.currentStep + 1) % this.maxSteps
+      this.stepTimer = window.setTimeout(() => {
+        this.scheduleStep()
+      }, stepDuration * 1000)
+      return
     }
 
     // --- Mode 1: Soaring Trumpet Lead with Brass Chords ---
@@ -1712,8 +2004,8 @@ class AudioEngine {
   }
 
   // Export to true 16-bit 44.1kHz stereo .WAV using native OfflineAudioContext (clamped to max 03:00 / 180s)
-  public async exportSoundscapeWav(durationSeconds = 180): Promise<Blob> {
-    const clampedDuration = Math.max(5, Math.min(180, durationSeconds))
+  public async exportSoundscapeWav(durationSeconds?: number): Promise<Blob> {
+    const clampedDuration = Math.max(5, Math.min(180, durationSeconds || this.timelineDuration))
     const sampleRate = 44100
     const offlineCtx = new OfflineAudioContext(2, sampleRate * clampedDuration, sampleRate)
 

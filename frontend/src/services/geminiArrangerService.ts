@@ -98,29 +98,36 @@ class GeminiArrangerService {
     return Boolean(this.getApiKey()) || this.isBackendKeyActive
   }
 
-  // Primary method to arrange music from any prompt
-  public async arrangeMusic(prompt: string): Promise<ArrangedComposition> {
+  // Primary method to arrange music from any prompt with explicit duration
+  public async arrangeMusic(prompt: string, duration = 30): Promise<ArrangedComposition> {
     const activeKey = this.getApiKey()
+    const targetDuration = Math.max(10, Math.min(180, duration))
+
+    console.log(`%c[Dramatone AI] 🎼 Starting arrangement for: "${prompt}" (Length: ${targetDuration}s)`, 'color: #f97316; font-weight: bold')
 
     // 1. Try single backend/.env GEMINI_API_KEY via proxy if backend is online
     try {
+      console.log('[Dramatone AI] 📡 Calling backend AI proxy (/api/ai/arrange)...')
       const backendRes = await fetch(`${BACKEND_AI_URL}/arrange`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, duration: targetDuration }),
         signal: AbortSignal.timeout(12000)
       })
 
       if (backendRes.ok) {
         const data = await backendRes.json()
         if (data.success && data.arrangement) {
-          return this.sanitizeParsedArrangement(data.arrangement, prompt)
+          console.log(`%c[Dramatone AI] ✅ Score generated via ${data.model}: "${data.arrangement.title}" (${data.arrangement.notes?.length || 0} notes across 4 measures)`, 'color: #10b981; font-weight: bold', data.arrangement)
+          return this.sanitizeParsedArrangement(data.arrangement, prompt, targetDuration)
         }
         if (data.error) {
+          console.warn('[Dramatone AI] ⚠️ Backend returned error:', data.error)
           throw new Error(data.error)
         }
       }
     } catch (e: any) {
+      console.warn('[Dramatone AI] ⚠️ Backend proxy notice:', e.message)
       if (e?.message && !e.message.includes('fetch') && !e.message.includes('timeout') && !e.message.includes('Failed')) {
         throw e // Pass meaningful Gemini error to the caller
       }
@@ -130,20 +137,25 @@ class GeminiArrangerService {
     // 2. Direct Gemini API call using key from backend/.env or browser session
     if (activeKey) {
       try {
-        const directResult = await this.queryGeminiApi(prompt, activeKey)
-        if (directResult) return directResult
+        console.log('[Dramatone AI] 🌐 Trying direct Gemini API call...')
+        const directResult = await this.queryGeminiApi(prompt, activeKey, targetDuration)
+        if (directResult) {
+          console.log('%c[Dramatone AI] ✅ Direct Gemini API arrangement succeeded:', 'color: #10b981; font-weight: bold', directResult)
+          return directResult
+        }
       } catch (err: any) {
-        console.error('Gemini API Error:', err)
+        console.error('[Dramatone AI] ❌ Direct Gemini API error:', err)
         throw new Error(`Gemini API ${err.message || 'Request failed'}`)
       }
     }
 
     // 3. Fallback procedural arranger (works when no API key is provided)
-    return this.proceduralArranger(prompt)
+    console.log('%c[Dramatone AI] ⚙️ Running procedural 64-step music arranger...', 'color: #f59e0b; font-weight: bold')
+    return this.proceduralArranger(prompt, targetDuration)
   }
 
   // Helper to format and sanitize JSON from Gemini
-  private sanitizeParsedArrangement(parsed: any, prompt: string): ArrangedComposition {
+  private sanitizeParsedArrangement(parsed: any, prompt: string, defaultDuration = 30): ArrangedComposition {
     const chords = Array.isArray(parsed.chords) && parsed.chords.length === 4
       ? parsed.chords
       : [
@@ -161,7 +173,7 @@ class GeminiArrangerService {
       ? parsed.bassFreqs
       : [73.42, 58.27, 65.41, 55.0]
 
-    const notes: NoteStep[] = Array.isArray(parsed.notes)
+    let notes: NoteStep[] = Array.isArray(parsed.notes)
       ? parsed.notes.map((n: { midi?: number; step?: number; duration?: number }, i: number) => ({
         id: `ai-note-${i}`,
         midi: Math.max(36, Math.min(84, n.midi || 60)),
@@ -169,6 +181,45 @@ class GeminiArrangerService {
         duration: Math.max(1, Math.min(8, n.duration || 1))
       }))
       : []
+
+    // Ensure notes span all 4 measures (steps 0-63) so the DAW plays the full arrangement past 2 seconds
+    const maxStep = notes.reduce((max, n) => Math.max(max, n.step), 0)
+    if (notes.length > 0 && maxStep < 24) {
+      const baseNotes = [...notes]
+      for (let m = 1; m < 4; m++) {
+        const offset = m * 16
+        baseNotes.forEach((n, idx) => {
+          const shift = m === 1 ? 3 : m === 2 ? -2 : 0
+          let newMidi = n.midi + shift
+          while (newMidi < 48) newMidi += 12
+          while (newMidi > 76) newMidi -= 12
+          notes.push({
+            id: `ai-note-m${m}-${idx}`,
+            midi: newMidi,
+            step: Math.min(63, n.step + offset),
+            duration: n.duration
+          })
+        })
+      }
+    } else if (notes.length === 0 && chords.length > 0) {
+      const freqToMidi = (freq: number) => Math.round(69 + 12 * Math.log2(Math.max(20, freq) / 440))
+      chords.forEach((chordFreqs: number[], chordIdx: number) => {
+        const baseStep = chordIdx * 16
+        chordFreqs.forEach((freq: number) => {
+          let midi = freqToMidi(freq)
+          while (midi < 48) midi += 12
+          while (midi > 72) midi -= 12
+          notes.push({
+            id: `gen-chord-${chordIdx}-${midi}`,
+            midi,
+            step: baseStep,
+            duration: 4
+          })
+        })
+      })
+    }
+
+    const durationSeconds = Math.max(10, Math.min(180, Number(parsed.durationSeconds) || defaultDuration))
 
     return {
       title: parsed.title || 'Gemini Cinematic Arrangement',
@@ -184,7 +235,7 @@ class GeminiArrangerService {
       hasSubBass: Boolean(parsed.hasSubBass),
       hasStaccato: Boolean(parsed.hasStaccato),
       diffusionPrompt: parsed.diffusionPrompt || prompt,
-      explanation: parsed.explanation || 'Composed dynamically by Gemini 1.5 Flash.',
+      explanation: parsed.explanation || 'Composed dynamically by Gemini.',
       chords,
       scale,
       bassFreqs,
@@ -195,34 +246,36 @@ class GeminiArrangerService {
         guitar: parsed.stemNames?.guitar || 'Melodic Voice',
         vocal: parsed.stemNames?.vocal || 'Atmospheric Texture'
       },
-      durationSeconds: Math.max(15, Math.min(180, Number(parsed.durationSeconds) || 180)),
+      durationSeconds,
       isAiGenerated: true,
       isMock: false
     }
   }
 
   // Real Gemini REST API Call
-  private async queryGeminiApi(prompt: string, apiKey: string): Promise<ArrangedComposition | null> {
-    const systemPrompt = `You are Dramatone AI, an elite Hollywood film composer, music theorist, and audio engineer.
-Given a director's scene or emotional prompt, you arrange a multi-stem musical score.
+  private async queryGeminiApi(prompt: string, apiKey: string, targetDuration = 30): Promise<ArrangedComposition | null> {
+    const systemPrompt = `You are Dramatone AI, an elite adaptive soundscape composer, music theorist, and audio engineer built for independent indie game developers, filmmakers, and podcast producers.
+Given a scene, gameplay state, podcast narrative beat, or emotional prompt, you arrange a multi-stem adaptive musical soundscape tailored to dynamic emotional pacing.
+Target composition duration: ${targetDuration} seconds.
 You MUST output valid, raw JSON only without markdown formatting.
 
 Format:
 {
   "title": "Short poetic title",
-  "genre": "Genre name (e.g. Cinematic Indie Score, Dark Orchestral, Cyberpunk)",
+  "genre": "Genre name (e.g. Indie Game OST, Cinematic Underscore, Cyberpunk Action, Atmospheric Podcast Ambience)",
   "mood": "Primary emotion (e.g. Hesitant & Tender, Melancholic, Tense, Heroic)",
   "bpm": number (between 60 and 140),
   "key": "Musical Key (e.g. D Minor, Bb Major)",
   "tension": number (0 to 100),
-  "leadInstrument": "piano" | "strings" | "pluck" | "trumpet" | "synth",
+  "durationSeconds": ${targetDuration},
+  "leadInstrument": "keys" | "strings" | "pluck" | "trumpet" | "synth",
   "hasStrings": boolean,
   "hasRainFoley": boolean,
   "hasGradualBuild": boolean,
   "hasSubBass": boolean,
   "hasStaccato": boolean,
-  "diffusionPrompt": "A rich, evocative studio-grade acoustic prompt for Meta MusicGen / Stable Audio (describe instruments, acoustic room resonance, microphone tone, and cinematic vibe)",
-  "explanation": "1 concise sentence explaining the music theory justification for this emotion",
+  "diffusionPrompt": "A rich, evocative studio-grade acoustic prompt for Meta MusicGen / Stable Audio (describe instruments, room acoustics, dialogue-friendly dynamic space, and emotional pacing)",
+  "explanation": "1 concise sentence explaining the musical theory and narrative/gameplay justification for this pacing",
   "chords": [
     [freq1, freq2, freq3, freq4],
     [freq1, freq2, freq3, freq4],
@@ -240,13 +293,15 @@ Format:
     "guitar": "Descriptive instrument name for melody/pluck",
     "vocal": "Descriptive instrument name for texture/foley"
   }
-}`
+}
+CRITICAL NOTE DISTRIBUTION:
+You MUST generate 16 to 32 note events distributed evenly across all 4 measures (steps 0 through 63: Measure 1: steps 0-15, Measure 2: steps 16-31, Measure 3: steps 32-47, Measure 4: steps 48-63). DO NOT stop generating after step 12! Ensure melodic and harmonic notes exist in every measure!`
 
     const body = {
       contents: [
         {
           role: 'user',
-          parts: [{ text: `${systemPrompt}\n\nDirector's Prompt: "${prompt}"` }]
+          parts: [{ text: `${systemPrompt}\n\nCreator's Prompt: "${prompt}"` }]
         }
       ],
       generationConfig: {
@@ -255,22 +310,30 @@ Format:
       }
     }
 
-    const candidateModels = ['gemini-3.5-flash-lite', 'gemini-flash-lite-latest', 'gemini-3.5-flash']
+    const candidateModels = [
+      'gemini-3.1-flash-lite',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-lite-latest'
+    ]
     let lastError: Error | null = null
 
     for (const model of candidateModels) {
+      const startTime = Date.now()
       try {
+        console.log(`[Dramatone AI] 🤖 Direct Gemini: Calling ${model}...`)
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(10000)
+          signal: AbortSignal.timeout(12000)
         })
 
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({}))
           const msg = errBody?.error?.message || res.statusText
+          console.warn(`[Dramatone AI] ⚠️ Model ${model} returned ${res.status}: ${msg}`)
           lastError = new Error(`Google API ${res.status}: ${msg}`)
           continue
         }
@@ -281,8 +344,11 @@ Format:
 
         const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
         const parsed = JSON.parse(cleaned)
-        return this.sanitizeParsedArrangement(parsed, prompt)
+        const elapsed = Date.now() - startTime
+        console.log(`%c[Dramatone AI] ✅ Model ${model} succeeded in ${elapsed}ms:`, 'color: #10b981; font-weight: bold', parsed)
+        return this.sanitizeParsedArrangement(parsed, prompt, targetDuration)
       } catch (err: any) {
+        console.warn(`[Dramatone AI] ⚠️ Model ${model} exception:`, err.message)
         lastError = err
       }
     }
@@ -292,8 +358,9 @@ Format:
   }
 
   // Intelligent Procedural Arranger (Works seamlessly before/without API Key)
-  public proceduralArranger(prompt: string): ArrangedComposition {
+  public proceduralArranger(prompt: string, duration = 30): ArrangedComposition {
     const p = (prompt || '').toLowerCase()
+    const durationSeconds = Math.max(10, Math.min(180, duration))
 
     // 1. Shy / Hesitant / Awkward / Intimate / Timid Archetype
     if (p.includes('shy') || p.includes('timid') || p.includes('hesitat') || p.includes('awkward') || p.includes('vulnerab') || p.includes('blush')) {
@@ -306,13 +373,13 @@ Format:
       const scale = [146.83, 164.81, 174.61, 196.0, 220.0, 246.94, 261.63, 293.66]
       const bassFreqs = [73.42, 58.27, 65.41, 55.0]
 
-      // Sparser notes with hesitations on steps
+      // Sparser notes with hesitations on steps across all 4 measures
       const notes: NoteStep[] = [
         // Measure 1: Dm9 gentle chord + hesitating pluck
         { id: 'shy-1', midi: noteNameToMidi('D4'), step: 0, duration: 4 },
         { id: 'shy-2', midi: noteNameToMidi('F4'), step: 0, duration: 3 },
         { id: 'shy-3', midi: noteNameToMidi('A4'), step: 2, duration: 2 },
-        { id: 'shy-4', midi: noteNameToMidi('C5'), step: 6, duration: 2 }, // timid hesitation
+        { id: 'shy-4', midi: noteNameToMidi('C5'), step: 6, duration: 2 },
         // Measure 2: Bbmaj7
         { id: 'shy-5', midi: noteNameToMidi('Bb3'), step: 16, duration: 4 },
         { id: 'shy-6', midi: noteNameToMidi('D4'), step: 16, duration: 3 },
@@ -326,7 +393,8 @@ Format:
         // Measure 4: Lingering Asus4 fade
         { id: 'shy-13', midi: noteNameToMidi('A3'), step: 48, duration: 4 },
         { id: 'shy-14', midi: noteNameToMidi('D4'), step: 50, duration: 3 },
-        { id: 'shy-15', midi: noteNameToMidi('E4'), step: 56, duration: 2 }
+        { id: 'shy-15', midi: noteNameToMidi('E4'), step: 56, duration: 2 },
+        { id: 'shy-16', midi: noteNameToMidi('G4'), step: 60, duration: 2 }
       ]
 
       return {
@@ -356,6 +424,7 @@ Format:
           guitar: 'Hesitant Nylon Plucks',
           vocal: 'Warm Room Ambient Tone'
         },
+        durationSeconds,
         isAiGenerated: false,
         isMock: true
       }
@@ -373,13 +442,26 @@ Format:
       const bassFreqs = [65.41, 51.91, 43.65, 49.0]
 
       const notes: NoteStep[] = [
+        // Measure 1 (steps 0-15)
         { id: 'rain-1', midi: noteNameToMidi('C4'), step: 0, duration: 4 },
         { id: 'rain-2', midi: noteNameToMidi('Eb4'), step: 2, duration: 3 },
         { id: 'rain-3', midi: noteNameToMidi('G4'), step: 8, duration: 2 },
         { id: 'rain-4', midi: noteNameToMidi('Bb4'), step: 12, duration: 2 },
+        // Measure 2 (steps 16-31)
         { id: 'rain-5', midi: noteNameToMidi('Ab3'), step: 16, duration: 4 },
         { id: 'rain-6', midi: noteNameToMidi('C4'), step: 18, duration: 3 },
-        { id: 'rain-7', midi: noteNameToMidi('Eb4'), step: 22, duration: 2 }
+        { id: 'rain-7', midi: noteNameToMidi('Eb4'), step: 22, duration: 2 },
+        { id: 'rain-8', midi: noteNameToMidi('G4'), step: 28, duration: 2 },
+        // Measure 3 (steps 32-47)
+        { id: 'rain-9', midi: noteNameToMidi('F3'), step: 32, duration: 4 },
+        { id: 'rain-10', midi: noteNameToMidi('Ab3'), step: 34, duration: 3 },
+        { id: 'rain-11', midi: noteNameToMidi('C4'), step: 40, duration: 2 },
+        { id: 'rain-12', midi: noteNameToMidi('Eb4'), step: 44, duration: 2 },
+        // Measure 4 (steps 48-63)
+        { id: 'rain-13', midi: noteNameToMidi('G3'), step: 48, duration: 4 },
+        { id: 'rain-14', midi: noteNameToMidi('B3'), step: 50, duration: 3 },
+        { id: 'rain-15', midi: noteNameToMidi('D4'), step: 56, duration: 2 },
+        { id: 'rain-16', midi: noteNameToMidi('F4'), step: 60, duration: 2 }
       ]
 
       return {
@@ -408,6 +490,7 @@ Format:
           guitar: 'Solo Cello Ostinato',
           vocal: 'Binaural Rain Foley'
         },
+        durationSeconds,
         isAiGenerated: false,
         isMock: true
       }
@@ -424,12 +507,34 @@ Format:
       const scale = [110.0, 123.47, 130.81, 146.83, 164.81, 174.61, 196.0, 220.0]
       const bassFreqs = [55.0, 43.65, 65.41, 49.0]
       const notes: NoteStep[] = [
+        // Measure 1 (steps 0-15)
         { id: 'cyber-1', midi: 57, step: 0, duration: 1 },
         { id: 'cyber-2', midi: 57, step: 2, duration: 1 },
         { id: 'cyber-3', midi: 60, step: 4, duration: 1 },
         { id: 'cyber-4', midi: 62, step: 6, duration: 1 },
         { id: 'cyber-5', midi: 57, step: 8, duration: 1 },
-        { id: 'cyber-6', midi: 65, step: 10, duration: 1 }
+        { id: 'cyber-6', midi: 65, step: 10, duration: 1 },
+        // Measure 2 (steps 16-31)
+        { id: 'cyber-7', midi: 53, step: 16, duration: 1 },
+        { id: 'cyber-8', midi: 53, step: 18, duration: 1 },
+        { id: 'cyber-9', midi: 57, step: 20, duration: 1 },
+        { id: 'cyber-10', midi: 60, step: 22, duration: 1 },
+        { id: 'cyber-11', midi: 57, step: 24, duration: 1 },
+        { id: 'cyber-12', midi: 64, step: 26, duration: 1 },
+        // Measure 3 (steps 32-47)
+        { id: 'cyber-13', midi: 60, step: 32, duration: 1 },
+        { id: 'cyber-14', midi: 60, step: 34, duration: 1 },
+        { id: 'cyber-15', midi: 64, step: 36, duration: 1 },
+        { id: 'cyber-16', midi: 67, step: 38, duration: 1 },
+        { id: 'cyber-17', midi: 64, step: 40, duration: 1 },
+        { id: 'cyber-18', midi: 69, step: 42, duration: 1 },
+        // Measure 4 (steps 48-63)
+        { id: 'cyber-19', midi: 55, step: 48, duration: 1 },
+        { id: 'cyber-20', midi: 55, step: 50, duration: 1 },
+        { id: 'cyber-21', midi: 59, step: 52, duration: 1 },
+        { id: 'cyber-22', midi: 62, step: 54, duration: 1 },
+        { id: 'cyber-23', midi: 65, step: 58, duration: 1 },
+        { id: 'cyber-24', midi: 67, step: 60, duration: 1 }
       ]
 
       return {
@@ -458,6 +563,7 @@ Format:
           guitar: 'Staccato Synth Arp',
           vocal: 'Cyber Sub-Bass Drone'
         },
+        durationSeconds,
         isAiGenerated: false,
         isMock: true
       }
@@ -473,10 +579,26 @@ Format:
     const scale = [146.83, 174.61, 196.0, 220.0, 261.63, 293.66, 349.23, 392.0]
     const bassFreqs = [36.71, 29.14, 43.65, 32.7]
     const notes: NoteStep[] = [
+      // Measure 1 (steps 0-15)
       { id: 'def-1', midi: 62, step: 0, duration: 3 },
       { id: 'def-2', midi: 65, step: 4, duration: 2 },
       { id: 'def-3', midi: 69, step: 8, duration: 2 },
-      { id: 'def-4', midi: 72, step: 12, duration: 2 }
+      { id: 'def-4', midi: 72, step: 12, duration: 2 },
+      // Measure 2 (steps 16-31)
+      { id: 'def-5', midi: 58, step: 16, duration: 3 },
+      { id: 'def-6', midi: 62, step: 20, duration: 2 },
+      { id: 'def-7', midi: 65, step: 24, duration: 2 },
+      { id: 'def-8', midi: 70, step: 28, duration: 2 },
+      // Measure 3 (steps 32-47)
+      { id: 'def-9', midi: 53, step: 32, duration: 3 },
+      { id: 'def-10', midi: 57, step: 36, duration: 2 },
+      { id: 'def-11', midi: 60, step: 40, duration: 2 },
+      { id: 'def-12', midi: 65, step: 44, duration: 2 },
+      // Measure 4 (steps 48-63)
+      { id: 'def-13', midi: 60, step: 48, duration: 3 },
+      { id: 'def-14', midi: 64, step: 52, duration: 2 },
+      { id: 'def-15', midi: 67, step: 56, duration: 2 },
+      { id: 'def-16', midi: 72, step: 60, duration: 2 }
     ]
 
     return {
@@ -505,6 +627,7 @@ Format:
         guitar: 'Staccato Ostinato',
         vocal: 'Sub-Bass Drone Foundation'
       },
+      durationSeconds,
       isAiGenerated: false,
       isMock: true
     }

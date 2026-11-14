@@ -15,10 +15,11 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
   const [emotion, setEmotion] = useState<'Calm' | 'Suspense' | 'Heroic' | 'Melancholy'>('Suspense')
   const [tension, setTension] = useState(68)
   const [sceneName, setSceneName] = useState('Midnight Chase Sequence')
+  const [selectedDuration, setSelectedDuration] = useState<number>(() => audioEngine.getTimelineDuration() || 30)
   const [isPlaying, setIsPlaying] = useState(() => audioEngine.getIsPlaying())
   const [hasComposition, setHasComposition] = useState(() => audioEngine.hasComposition())
   const [elapsedSeconds, setElapsedSeconds] = useState(() => audioEngine.getElapsedSeconds())
-  const [timelineDuration, setTimelineDuration] = useState(() => audioEngine.getTimelineDuration())
+  const [timelineDuration, setTimelineDuration] = useState(() => audioEngine.getTimelineDuration() || 30)
   const [isExporting, setIsExporting] = useState(false)
   const [exportedStatus, setExportedStatus] = useState<string | null>(null)
   const [layers, setLayers] = useState({ ambience: 75, strings: 62, subPulse: 80, foley: 45 })
@@ -58,9 +59,10 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
     } else {
       audioEngine.ensureContext()
       if (!audioEngine.hasComposition()) {
-        audioEngine.loadComposition('Cyberpunk', emotion, 120, { duration: 180 })
+        audioEngine.loadComposition('Cyberpunk', emotion, 120, { duration: selectedDuration })
         audioEngine.setTension(tension)
       }
+      audioEngine.setTimelineDuration(selectedDuration)
       audioEngine.start()
       setIsPlaying(true)
     }
@@ -69,7 +71,8 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
   const handleOpenInDaw = () => {
     audioEngine.ensureContext()
     const activeProf = audioEngine.getActiveProfile()
-    audioEngine.loadComposition(activeProf.genre || 'Cyberpunk', emotion, activeProf.bpm || 120)
+    audioEngine.loadComposition(activeProf.genre || 'Cyberpunk', emotion, activeProf.bpm || 120, { duration: selectedDuration })
+    audioEngine.setTimelineDuration(selectedDuration)
     audioEngine.setTension(tension)
     onNavigate('dashboard')
   }
@@ -124,7 +127,7 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
   const handleExportWav = async () => {
     setIsExporting(true)
     try {
-      await soundscapeService.exportWav(sceneName, 180)
+      await soundscapeService.exportWav(sceneName, selectedDuration)
       setExportedStatus('WAV Downloaded!')
       setTimeout(() => setExportedStatus(null), 3000)
     } finally {
@@ -194,6 +197,34 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
                   }`}
                 >
                   {em}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Soundscape Length Selector */}
+          <div className={`p-3.5 rounded-3xl border space-y-2 ${cardClass}`}>
+            <div className="flex items-center justify-between text-xs">
+              <span className={`font-semibold ${isDark ? 'text-zinc-200' : 'text-slate-900'}`}>Soundscape Length</span>
+              <span className={`font-mono font-bold ${accentText}`}>{selectedDuration}s ({formatTime(selectedDuration)})</span>
+            </div>
+            <div className="grid grid-cols-6 gap-1">
+              {[15, 30, 60, 90, 120, 180].map((dur) => (
+                <button
+                  key={dur}
+                  type="button"
+                  onClick={() => {
+                    setSelectedDuration(dur)
+                    setTimelineDuration(dur)
+                    audioEngine.setTimelineDuration(dur)
+                  }}
+                  className={`py-1 rounded-xl text-[10px] font-mono font-bold border transition cursor-pointer ${
+                    selectedDuration === dur
+                      ? isDark ? 'border-orange-500 bg-orange-500/25 text-orange-400 shadow-sm' : 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-sm'
+                      : isDark ? 'border-white/10 bg-zinc-900/60 text-zinc-400 hover:text-white' : 'border-slate-200 bg-white/70 text-slate-600 hover:text-slate-950'
+                  }`}
+                >
+                  {dur}s
                 </button>
               ))}
             </div>
