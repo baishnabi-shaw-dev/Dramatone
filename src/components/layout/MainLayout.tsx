@@ -4,6 +4,7 @@ import {
   Film, Sparkles, Repeat, Upload, SlidersHorizontal, RotateCcw, Scissors
 } from 'lucide-react'
 import { Sidebar, AppRoute } from './Sidebar'
+import logo from '@/assets/icons/favicon.svg'
 
 interface MainLayoutProps {
   activePage: AppRoute
@@ -185,9 +186,7 @@ export function MainLayout({
         }`}>
           <div className="flex items-center gap-3">
             <div className={`flex items-center gap-1 ${accentText}`}>
-              <span className="w-1 h-3 bg-current rounded-full" />
-              <span className="w-1 h-4 bg-current rounded-full" />
-              <span className="w-1 h-2.5 bg-current rounded-full" />
+              <img src={logo} alt="Dramatone Studio Logo" className="w-8 h-8" />
             </div>
             <span className={`font-bold text-sm tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
               Dramatone <span className={accentText}>Studio</span>
