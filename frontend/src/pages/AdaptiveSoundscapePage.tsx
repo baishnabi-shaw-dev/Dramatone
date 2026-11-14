@@ -15,7 +15,10 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
   const [emotion, setEmotion] = useState<'Calm' | 'Suspense' | 'Heroic' | 'Melancholy'>('Suspense')
   const [tension, setTension] = useState(68)
   const [sceneName, setSceneName] = useState('Midnight Chase Sequence')
-  const [isPlaying, setIsPlaying] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(() => audioEngine.getIsPlaying())
+  const [hasComposition, setHasComposition] = useState(() => audioEngine.hasComposition())
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => audioEngine.getElapsedSeconds())
+  const [timelineDuration, setTimelineDuration] = useState(() => audioEngine.getTimelineDuration())
   const [isExporting, setIsExporting] = useState(false)
   const [exportedStatus, setExportedStatus] = useState<string | null>(null)
   const [layers, setLayers] = useState({ ambience: 75, strings: 62, subPulse: 80, foley: 45 })
@@ -25,11 +28,28 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
   }, [tension])
 
   useEffect(() => {
-    if (!audioEngine.hasComposition()) {
-      audioEngine.loadComposition('Cyberpunk', 'Suspense', 120)
-      audioEngine.setTension(tension)
+    const unsubTimeline = audioEngine.addTimelineListener((_pct, elapsed) => {
+      setElapsedSeconds(elapsed)
+      setTimelineDuration(audioEngine.getTimelineDuration())
+      setHasComposition(audioEngine.hasComposition())
+    })
+    const unsubPlayback = audioEngine.addPlaybackListener((playing) => {
+      setIsPlaying(playing)
+      setHasComposition(audioEngine.hasComposition())
+      setTimelineDuration(audioEngine.getTimelineDuration())
+    })
+    return () => {
+      unsubTimeline()
+      unsubPlayback()
     }
   }, [])
+
+  const formatTime = (secs: number) => {
+    const s = Math.floor(Math.max(0, secs))
+    const mins = Math.floor(s / 60)
+    const rem = s % 60
+    return `0${mins}:${rem < 10 ? `0${rem}` : rem}`
+  }
 
   const handleTogglePlay = () => {
     if (isPlaying) {
@@ -38,7 +58,7 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
     } else {
       audioEngine.ensureContext()
       if (!audioEngine.hasComposition()) {
-        audioEngine.loadComposition('Cyberpunk', emotion, 120)
+        audioEngine.loadComposition('Cyberpunk', emotion, 120, { duration: 180 })
         audioEngine.setTension(tension)
       }
       audioEngine.start()
@@ -188,7 +208,13 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
               }`}
             >
               {isPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-              <span>{isPlaying ? 'Auditioning Live...' : 'Audition Soundscape'}</span>
+              <span>
+                {isPlaying
+                  ? `Auditioning (${formatTime(elapsedSeconds)} / ${formatTime(timelineDuration)})`
+                  : hasComposition
+                  ? `Audition (${formatTime(elapsedSeconds)} / ${formatTime(timelineDuration)})`
+                  : 'Audition Soundscape'}
+              </span>
             </button>
             <button
               onClick={handleOpenInDaw}

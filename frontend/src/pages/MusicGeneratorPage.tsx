@@ -133,7 +133,8 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
       hasRainFoley: hasRain,
       hasGradualBuild: hasBuild,
       hasSubBass: isStrings,
-      hasStaccato: isStrings
+      hasStaccato: isStrings,
+      duration: take.duration || duration
     })
     onNavigate('daw')
   }

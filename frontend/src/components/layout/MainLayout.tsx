@@ -27,11 +27,17 @@ export function MainLayout({
   subtitle,
   children
 }: MainLayoutProps) {
-  const [isPlaying, setIsPlaying] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(() => audioEngine.getIsPlaying())
+  const [hasComposition, setHasComposition] = useState(() => audioEngine.hasComposition())
+  const [timelineDuration, setTimelineDuration] = useState(() => audioEngine.getTimelineDuration())
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => audioEngine.getElapsedSeconds())
+  const [playhead, setPlayhead] = useState(() => {
+    const dur = audioEngine.getTimelineDuration()
+    return dur > 0 ? (audioEngine.getElapsedSeconds() / dur) * 100 : 0
+  })
   const [isLooping, setIsLooping] = useState(true)
-  const [playhead, setPlayhead] = useState(0)
-  const [masterVolume, setMasterVolume] = useState(85)
-  const [isMasterMuted, setIsMasterMuted] = useState(false)
+  const [masterVolume, setMasterVolume] = useState(() => audioEngine.getMasterVolume())
+  const [isMasterMuted, setIsMasterMuted] = useState(() => audioEngine.getIsMasterMuted())
 
   // Video Upload & Minor Self-Editing States
   const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null)
@@ -61,10 +67,54 @@ export function MainLayout({
     }
   }, [activePage])
 
-  // Sync Master Volume & Mute to AudioEngine
+  const handleVolumeChange = (val: number) => {
+    setMasterVolume(val)
+    if (isMasterMuted) setIsMasterMuted(false)
+    audioEngine.setMasterVolume(val, false)
+  }
+
+  const handleToggleMasterMute = () => {
+    const next = !isMasterMuted
+    setIsMasterMuted(next)
+    audioEngine.setMasterVolume(masterVolume, next)
+  }
+
+  // Subscribe to Audio Engine timeline and playback state across tabs
   useEffect(() => {
-    audioEngine.setMasterVolume(masterVolume, isMasterMuted)
-  }, [masterVolume, isMasterMuted])
+    setIsPlaying(audioEngine.getIsPlaying())
+    setHasComposition(audioEngine.hasComposition())
+    setTimelineDuration(audioEngine.getTimelineDuration())
+    setElapsedSeconds(audioEngine.getElapsedSeconds())
+    setMasterVolume(audioEngine.getMasterVolume())
+    setIsMasterMuted(audioEngine.getIsMasterMuted())
+
+    const unsubTimeline = audioEngine.addTimelineListener((percent, elapsed) => {
+      setPlayhead(percent)
+      setElapsedSeconds(elapsed)
+      setHasComposition(audioEngine.hasComposition())
+      setTimelineDuration(audioEngine.getTimelineDuration())
+      if (videoRef.current && videoRef.current.duration) {
+        videoRef.current.currentTime = (percent / 100) * videoRef.current.duration
+      }
+    })
+
+    const unsubPlayback = audioEngine.addPlaybackListener((playing) => {
+      setIsPlaying(playing)
+      setHasComposition(audioEngine.hasComposition())
+      setTimelineDuration(audioEngine.getTimelineDuration())
+      if (playing && videoRef.current && !videoAudioMuted) {
+        videoRef.current.playbackRate = playbackRate
+        videoRef.current.play().catch(() => {})
+      } else if (!playing && videoRef.current) {
+        videoRef.current.pause()
+      }
+    })
+
+    return () => {
+      unsubTimeline()
+      unsubPlayback()
+    }
+  }, [videoAudioMuted, playbackRate])
 
   const handleExportMix = async () => {
     setIsExportingMix(true)
@@ -85,6 +135,67 @@ export function MainLayout({
     }
   }
 
+  const handleTogglePlay = () => {
+    if (!hasComposition && !uploadedVideoUrl) return
+    if (isPlaying) {
+      audioEngine.stop()
+      setIsPlaying(false)
+      videoRef.current?.pause()
+    } else {
+      audioEngine.ensureContext()
+      if (hasComposition && !aiScoreMuted) {
+        audioEngine.start()
+      }
+      setIsPlaying(true)
+      if (videoRef.current) {
+        videoRef.current.muted = videoAudioMuted
+        videoRef.current.playbackRate = playbackRate
+        videoRef.current.play().catch(() => {})
+      }
+    }
+  }
+
+  const handleScrub = (newPercent: number) => {
+    if (!hasComposition && !uploadedVideoUrl) return
+    const clamped = Math.max(trimStart, Math.min(trimEnd, newPercent))
+    setPlayhead(clamped)
+    if (hasComposition) {
+      audioEngine.seekTimelinePercent(clamped)
+    }
+    if (videoRef.current && videoRef.current.duration) {
+      videoRef.current.currentTime = (clamped / 100) * videoRef.current.duration
+    }
+  }
+
+  const handleRewind = () => {
+    if (!hasComposition && !uploadedVideoUrl) return
+    setPlayhead(trimStart)
+    if (hasComposition) {
+      audioEngine.seekTimelinePercent(trimStart)
+    }
+    if (videoRef.current && videoRef.current.duration) {
+      videoRef.current.currentTime = (trimStart / 100) * videoRef.current.duration
+    }
+  }
+
+  const handleForward = () => {
+    if (!hasComposition && !uploadedVideoUrl) return
+    setPlayhead(trimEnd)
+    if (hasComposition) {
+      audioEngine.seekTimelinePercent(trimEnd)
+    }
+    if (videoRef.current && videoRef.current.duration) {
+      videoRef.current.currentTime = (trimEnd / 100) * videoRef.current.duration
+    }
+  }
+
+  const handleStop = () => {
+    audioEngine.stop()
+    setIsPlaying(false)
+    videoRef.current?.pause()
+    handleRewind()
+  }
+
   // Global Keyboard Shortcuts (Space = Play/Pause, 0 = Rewind, L = Loop)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -93,29 +204,21 @@ export function MainLayout({
 
       if (e.code === 'Space') {
         e.preventDefault()
-        setIsPlaying((prev) => !prev)
+        handleTogglePlay()
       } else if (e.key === '0') {
-        setPlayhead(trimStart)
-        if (videoRef.current && videoRef.current.duration) {
-          videoRef.current.currentTime = (trimStart / 100) * videoRef.current.duration
-        }
+        handleRewind()
       } else if (e.key.toLowerCase() === 'l') {
         setIsLooping((prev) => !prev)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [trimStart])
+  }, [trimStart, hasComposition, isPlaying, uploadedVideoUrl, aiScoreMuted, videoAudioMuted, playbackRate])
 
   // Sync HTML5 Video element with Web Audio Engine & Transport
   useEffect(() => {
     const vid = videoRef.current
     if (isPlaying) {
-      if (audioEngine.hasComposition() && !aiScoreMuted) {
-        audioEngine.start()
-      } else {
-        audioEngine.stop()
-      }
       if (vid) {
         vid.muted = videoAudioMuted
         vid.playbackRate = playbackRate
@@ -125,39 +228,16 @@ export function MainLayout({
         })
       }
     } else {
-      audioEngine.stop()
       videoAnalysisService.stopAnalysis()
       if (vid) {
         vid.pause()
       }
     }
-  }, [isPlaying, uploadedVideoUrl, videoAudioMuted, aiScoreMuted, playbackRate])
+  }, [isPlaying, uploadedVideoUrl, videoAudioMuted, playbackRate])
 
   useEffect(() => {
     audioEngine.setDialogueDuckingEnabled(dialogueDucking)
   }, [dialogueDucking])
-
-  // Master Playhead Loop respecting Trim In/Out
-  useEffect(() => {
-    if (!isPlaying) return
-    const timer = setInterval(() => {
-      setPlayhead((prev) => {
-        if (prev >= trimEnd) {
-          if (!isLooping) {
-            setIsPlaying(false)
-            return trimStart
-          }
-          if (videoRef.current && videoRef.current.duration) {
-            videoRef.current.currentTime = (trimStart / 100) * videoRef.current.duration
-          }
-          return trimStart
-        }
-        // Advance 100% across 180 seconds (3 mins) at 100ms intervals = (0.1s / 180s) * 100%
-        return prev + (1 / 18) * playbackRate
-      })
-    }, 100)
-    return () => clearInterval(timer)
-  }, [isPlaying, isLooping, trimStart, trimEnd, playbackRate])
 
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -172,14 +252,6 @@ export function MainLayout({
     audioEngine.resetComposition()
   }
 
-  const handleScrub = (newPercent: number) => {
-    const clamped = Math.max(trimStart, Math.min(trimEnd, newPercent))
-    setPlayhead(clamped)
-    if (videoRef.current && videoRef.current.duration) {
-      videoRef.current.currentTime = (clamped / 100) * videoRef.current.duration
-    }
-  }
-
   const resetVideoEdits = () => {
     setVideoBrightness(100)
     setVideoContrast(100)
@@ -189,16 +261,18 @@ export function MainLayout({
     setTrimEnd(100)
   }
 
-  const formatTime = (percent: number) => {
-    const totalSeconds = Math.floor((percent / 100) * 180)
-    const mins = Math.floor(totalSeconds / 60)
-    const secs = totalSeconds % 60
-    return `0${mins}:${secs < 10 ? `0${secs}` : secs}`
+  const formatTime = (secs: number) => {
+    if (!hasComposition || secs <= 0) return '00:00'
+    const s = Math.floor(secs)
+    const mins = Math.floor(s / 60)
+    const rem = s % 60
+    return `0${mins}:${rem < 10 ? `0${rem}` : rem}`
   }
 
-  // Dynamic 24 FPS SMPTE Timecode (live frames advance with playhead across 3-minute timeline)
-  const formatTimecode = (percent: number) => {
-    const totalFrames = Math.floor((percent / 100) * 180 * 24)
+  // Dynamic 24 FPS SMPTE Timecode (live frames advance with playhead across timeline)
+  const formatTimecode = (percent: number, duration = timelineDuration) => {
+    if (!hasComposition || duration <= 0) return '00:00:00:00'
+    const totalFrames = Math.floor((percent / 100) * duration * 24)
     const frames = totalFrames % 24
     const totalSecs = Math.floor(totalFrames / 24)
     const secs = totalSecs % 60
@@ -436,9 +510,13 @@ export function MainLayout({
               {/* Dedicated Video Scrubber Bar (Just like Filmora's preview bar) */}
               <div className="flex items-center gap-2.5 px-1">
                 <button
-                  onClick={() => setIsPlaying(!isPlaying)}
+                  onClick={handleTogglePlay}
+                  disabled={!hasComposition && !uploadedVideoUrl}
+                  title={hasComposition || uploadedVideoUrl ? (isPlaying ? 'Pause' : 'Play') : 'Generate audio or cue a scene to play'}
                   className={`w-6 h-6 rounded-full flex items-center justify-center cursor-pointer shrink-0 ${
-                    isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
+                    !hasComposition && !uploadedVideoUrl
+                      ? 'opacity-40 cursor-not-allowed bg-zinc-700 text-zinc-400'
+                      : isDark ? 'bg-orange-500 text-zinc-950' : 'bg-indigo-600 text-white'
                   }`}
                 >
                   {isPlaying ? <Pause className="w-3 h-3 fill-current" /> : <Play className="w-3 h-3 fill-current ml-0.5" />}
@@ -446,15 +524,16 @@ export function MainLayout({
 
                 <input
                   type="range"
-                  min={trimStart}
-                  max={trimEnd}
-                  value={playhead}
+                  min={0}
+                  max={hasComposition ? 100 : 0}
+                  value={hasComposition ? playhead : 0}
+                  disabled={!hasComposition}
                   onChange={(e) => handleScrub(Number(e.target.value))}
-                  className={`flex-1 h-1 cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
+                  className={`flex-1 h-1 ${hasComposition ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'} ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
                 />
 
                 <span className={`text-[10px] font-mono shrink-0 ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
-                  {formatTime(playhead)} / 03:00
+                  {hasComposition ? `${formatTime(elapsedSeconds)} / ${formatTime(timelineDuration)}` : '00:00 / 00:00'}
                 </span>
               </div>
 
@@ -634,7 +713,7 @@ export function MainLayout({
         }`}>
           <div className="flex items-center gap-2.5 w-36">
             <button
-              onClick={() => setIsMasterMuted(!isMasterMuted)}
+              onClick={handleToggleMasterMute}
               title={isMasterMuted ? 'Unmute Audio Engine' : 'Mute Audio Engine'}
               className={`cursor-pointer transition ${isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
             >
@@ -645,11 +724,7 @@ export function MainLayout({
               min="0"
               max="100"
               value={isMasterMuted ? 0 : masterVolume}
-              onChange={(e) => {
-                const val = Number(e.target.value)
-                setMasterVolume(val)
-                if (isMasterMuted) setIsMasterMuted(false)
-              }}
+              onChange={(e) => handleVolumeChange(Number(e.target.value))}
               title={`Master Volume: ${masterVolume}%`}
               className={`w-full h-1 cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
             />
@@ -668,47 +743,60 @@ export function MainLayout({
               <Repeat className="w-3.5 h-3.5" />
             </button>
 
-            <button onClick={() => handleScrub(trimStart)} title="Rewind (0)" className={`cursor-pointer transition ${isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}>
+            <button
+              onClick={handleRewind}
+              disabled={!hasComposition && !uploadedVideoUrl}
+              title="Rewind (0)"
+              className={`cursor-pointer transition ${!hasComposition && !uploadedVideoUrl ? 'opacity-35 cursor-not-allowed' : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
+            >
               <SkipBack className="w-4 h-4" />
             </button>
 
             <button
-              onClick={() => setIsPlaying(!isPlaying)}
-              title="Play / Pause (Space)"
-              className={`w-8 h-8 rounded-full bg-gradient-to-r flex items-center justify-center shadow-md hover:brightness-110 transition cursor-pointer ${accentGradient}`}
+              onClick={handleTogglePlay}
+              disabled={!hasComposition && !uploadedVideoUrl}
+              title={hasComposition || uploadedVideoUrl ? (isPlaying ? 'Pause (Space)' : 'Play (Space)') : 'Generate audio or cue a scene to play'}
+              className={`w-8 h-8 rounded-full bg-gradient-to-r flex items-center justify-center shadow-md hover:brightness-110 transition cursor-pointer ${
+                !hasComposition && !uploadedVideoUrl ? 'opacity-40 cursor-not-allowed' : accentGradient
+              }`}
             >
               {isPlaying ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ml-0.5" />}
             </button>
 
             <button
-              onClick={() => {
-                setIsPlaying(false)
-                handleScrub(trimStart)
-              }}
-              className={`cursor-pointer transition ${isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
+              onClick={handleStop}
+              disabled={!hasComposition && !uploadedVideoUrl}
+              title="Stop"
+              className={`cursor-pointer transition ${!hasComposition && !uploadedVideoUrl ? 'opacity-35 cursor-not-allowed' : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
             >
               <Square className="w-3.5 h-3.5 fill-current" />
             </button>
 
-            <button onClick={() => handleScrub(trimEnd)} className={`cursor-pointer transition ${isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}>
+            <button
+              onClick={handleForward}
+              disabled={!hasComposition && !uploadedVideoUrl}
+              title="Fast Forward"
+              className={`cursor-pointer transition ${!hasComposition && !uploadedVideoUrl ? 'opacity-35 cursor-not-allowed' : isDark ? 'text-zinc-400 hover:text-white' : 'text-slate-700 hover:text-slate-950'}`}
+            >
               <SkipForward className="w-4 h-4" />
             </button>
           </div>
 
           <div className="flex items-center gap-3 flex-1 max-w-md">
             <span className={`text-[11px] font-mono ${isDark ? 'text-zinc-400' : 'text-slate-700'}`}>
-              {formatTime(playhead)}
+              {hasComposition ? formatTime(elapsedSeconds) : '00:00'}
             </span>
             <input
               type="range"
-              min={trimStart}
-              max={trimEnd}
-              value={playhead}
+              min={0}
+              max={hasComposition ? 100 : 0}
+              value={hasComposition ? playhead : 0}
+              disabled={!hasComposition}
               onChange={(e) => handleScrub(Number(e.target.value))}
-              className={`w-full h-1 cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
+              className={`w-full h-1 ${hasComposition ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'} ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
             />
             <span className={`text-[11px] font-mono ${isDark ? 'text-zinc-500' : 'text-slate-600'}`}>
-              03:00
+              {hasComposition ? formatTime(timelineDuration) : '00:00'}
             </span>
           </div>
         </footer>

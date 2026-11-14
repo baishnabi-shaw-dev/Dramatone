@@ -147,11 +147,11 @@ class GeminiArrangerService {
     const chords = Array.isArray(parsed.chords) && parsed.chords.length === 4
       ? parsed.chords
       : [
-          [146.83, 174.61, 220.0, 261.63],
-          [116.54, 146.83, 174.61, 220.0],
-          [130.81, 164.81, 196.0, 246.94],
-          [110.0, 138.59, 164.81, 220.0]
-        ]
+        [146.83, 174.61, 220.0, 261.63],
+        [116.54, 146.83, 174.61, 220.0],
+        [130.81, 164.81, 196.0, 246.94],
+        [110.0, 138.59, 164.81, 220.0]
+      ]
 
     const scale = Array.isArray(parsed.scale) && parsed.scale.length >= 5
       ? parsed.scale
@@ -163,11 +163,11 @@ class GeminiArrangerService {
 
     const notes: NoteStep[] = Array.isArray(parsed.notes)
       ? parsed.notes.map((n: { midi?: number; step?: number; duration?: number }, i: number) => ({
-          id: `ai-note-${i}`,
-          midi: Math.max(36, Math.min(84, n.midi || 60)),
-          step: Math.max(0, Math.min(63, n.step || 0)),
-          duration: Math.max(1, Math.min(8, n.duration || 1))
-        }))
+        id: `ai-note-${i}`,
+        midi: Math.max(36, Math.min(84, n.midi || 60)),
+        step: Math.max(0, Math.min(63, n.step || 0)),
+        duration: Math.max(1, Math.min(8, n.duration || 1))
+      }))
       : []
 
     return {

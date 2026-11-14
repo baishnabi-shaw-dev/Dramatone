@@ -35,8 +35,9 @@ interface PageProps {
   onNavigate: (page: AppRoute) => void
 }
 
-function formatTimelineTime(percent: number): string {
-  const totalSeconds = Math.floor((percent / 100) * 180)
+function formatTimelineTime(percent: number, duration = audioEngine.getTimelineDuration()): string {
+  if (!audioEngine.hasComposition() || duration <= 0) return '00:00'
+  const totalSeconds = Math.floor((percent / 100) * duration)
   const mins = Math.floor(totalSeconds / 60)
   const secs = totalSeconds % 60
   return `0${mins}:${secs < 10 ? `0${secs}` : secs}`
@@ -61,12 +62,16 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   const [promptText, setPromptText] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [playhead, setPlayhead] = useState(0)
-  const [stems, setStems] = useState<StemTrack[]>([
-    { id: 'keys', name: 'Keys / Harmony', type: 'keys', volume: 80, muted: false, solo: false, bars: generateStemBars('keys') },
-    { id: 'drums', name: 'Neural Drums', type: 'drums', volume: 80, muted: false, solo: false, bars: generateStemBars('drums') },
-    { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', volume: 75, muted: false, solo: false, bars: generateStemBars('guitar') },
-    { id: 'vocal', name: 'Atmosphere / Texture', type: 'vocal', volume: 70, muted: false, solo: false, bars: generateStemBars('vocal') }
-  ])
+  const [stems, setStems] = useState<StemTrack[]>(() => {
+    const hasComp = audioEngine.hasComposition()
+    const notes = audioEngine.getActiveNotes()
+    return [
+      { id: 'keys', name: 'Keys / Harmony', type: 'keys', volume: 80, muted: false, solo: false, bars: hasComp ? generateStemBars('keys', notes) : [] },
+      { id: 'drums', name: 'Neural Drums', type: 'drums', volume: 80, muted: false, solo: false, bars: hasComp ? generateStemBars('drums', notes) : [] },
+      { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', volume: 75, muted: false, solo: false, bars: hasComp ? generateStemBars('guitar', notes) : [] },
+      { id: 'vocal', name: 'Atmosphere / Texture', type: 'vocal', volume: 70, muted: false, solo: false, bars: hasComp ? generateStemBars('vocal', notes) : [] }
+    ]
+  })
 
   const [videoSplits, setVideoSplits] = useState<number[]>([])
   const [splitNotice, setSplitNotice] = useState<string | null>(null)
@@ -187,7 +192,8 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
           hasSubBass: arranged.hasSubBass,
           chords: arranged.chords,
           scale: arranged.scale,
-          bassFreqs: arranged.bassFreqs
+          bassFreqs: arranged.bassFreqs,
+          durationSeconds: arranged.durationSeconds || 180
         },
         arranged.tension
       )
@@ -719,13 +725,22 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
 
             <button
               onClick={handleSplitAtPlayhead}
-              title={`Split clips at current playhead (${formatTimelineTime(playhead)})`}
-              className={`px-2.5 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 cursor-pointer transition ${
-                isDark ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25' : 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+              disabled={!audioEngine.hasComposition()}
+              title={
+                audioEngine.hasComposition()
+                  ? `Split clips at current playhead (${formatTimelineTime(playhead)})`
+                  : 'Generate audio to enable clip splitting'
+              }
+              className={`px-2.5 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 transition ${
+                !audioEngine.hasComposition()
+                  ? 'opacity-40 cursor-not-allowed border-zinc-700 bg-zinc-900/40 text-zinc-500'
+                  : isDark
+                  ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25 cursor-pointer'
+                  : 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 cursor-pointer'
               }`}
             >
               <Scissors className="w-3 h-3 text-orange-400" />
-              <span>Split at Playhead ({formatTimelineTime(playhead)})</span>
+              <span>Split at Playhead ({audioEngine.hasComposition() ? formatTimelineTime(playhead) : '00:00'})</span>
             </button>
 
             {videoSplits.length > 0 && (
@@ -760,7 +775,9 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
               <span>Follow Slider</span>
             </button>
             <span className={`text-[10px] font-mono ${isDark ? 'text-zinc-500' : 'text-slate-600'}`}>
-              00:00 — 00:45 — 01:30 — 02:15 — 03:00
+              {!audioEngine.hasComposition()
+                ? '00:00 — 00:00 (Empty Canvas)'
+                : `${formatTimelineTime(0)} — ${formatTimelineTime(25)} — ${formatTimelineTime(50)} — ${formatTimelineTime(75)} — ${formatTimelineTime(100)}`}
             </span>
           </div>
 

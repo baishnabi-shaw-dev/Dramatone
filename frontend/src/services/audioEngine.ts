@@ -26,6 +26,7 @@ export interface CompositionOptions {
   hasRainFoley?: boolean
   hasGradualBuild?: boolean
   hasSubBass?: boolean
+  duration?: number
 }
 
 export interface GenreProfile {
@@ -43,6 +44,7 @@ export interface GenreProfile {
   hasRainFoley?: boolean
   hasGradualBuild?: boolean
   hasSubBass?: boolean
+  durationSeconds?: number
 }
 
 const GENRE_PROFILES: Record<string, GenreProfile> = {
@@ -233,8 +235,12 @@ class AudioEngine {
   private rawDawGain: GainNode | null = null
   private convolver: ConvolverNode | null = null
   private reverbGain: GainNode | null = null
-  private masterVolume = 80
-  private isMasterMuted = false
+  private masterVolume: number = typeof window !== 'undefined' && localStorage.getItem('dramatone_master_volume')
+    ? Math.max(0, Math.min(100, Number(localStorage.getItem('dramatone_master_volume'))))
+    : 80
+  private isMasterMuted: boolean = typeof window !== 'undefined'
+    ? localStorage.getItem('dramatone_master_muted') === 'true'
+    : false
 
   // Active DAW Sequencer Notes (Synchronized between Piano Roll, AI Arranger & Timeline Sequencer)
   private activeNotes: Array<{
@@ -277,6 +283,26 @@ class AudioEngine {
   private timelineDuration = 180 // 3-minute timeline in seconds
   private elapsedSeconds = 0
   private timelineListeners: Set<(percent: number, elapsedSeconds: number) => void> = new Set()
+  private playbackListeners: Set<(isPlaying: boolean) => void> = new Set()
+
+  public addPlaybackListener(cb: (isPlaying: boolean) => void): () => void {
+    this.playbackListeners.add(cb)
+    return () => {
+      this.playbackListeners.delete(cb)
+    }
+  }
+
+  private notifyPlayback(isPlaying: boolean) {
+    this.playbackListeners.forEach((l) => {
+      try { l(isPlaying) } catch {}
+    })
+  }
+
+  private notifyTimeline(percent: number, elapsed: number) {
+    this.timelineListeners.forEach((l) => {
+      try { l(percent, elapsed) } catch {}
+    })
+  }
 
   // Initialize Audio Context on user gesture
   public ensureContext(): AudioContext {
@@ -373,10 +399,16 @@ class AudioEngine {
     return this.ctx
   }
 
-  // Master Volume Controls (Bug 1 Fix)
+  // Master Volume Controls (Persists across tabs)
   public setMasterVolume(volume: number, isMuted = false) {
     this.masterVolume = Math.max(0, Math.min(100, volume))
     this.isMasterMuted = isMuted
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('dramatone_master_volume', String(this.masterVolume))
+        localStorage.setItem('dramatone_master_muted', String(this.isMasterMuted))
+      } catch {}
+    }
     if (this.masterGain && this.ctx) {
       const targetGain = isMuted ? 0 : (this.masterVolume / 100) * 0.75
       this.masterGain.gain.setTargetAtTime(targetGain, this.ctx.currentTime, 0.02)
@@ -389,6 +421,18 @@ class AudioEngine {
 
   public getIsMasterMuted(): boolean {
     return this.isMasterMuted
+  }
+
+  public setTimelineDuration(seconds: number) {
+    this.timelineDuration = Math.max(5, Math.min(300, seconds))
+  }
+
+  public getTimelineDuration(): number {
+    return this.timelineDuration
+  }
+
+  public getElapsedSeconds(): number {
+    return this.elapsedSeconds
   }
 
   public setDawInstrumentGain(val: number) {
@@ -433,12 +477,15 @@ class AudioEngine {
     this.params.genre = ''
     this.params.mood = ''
     this.currentStep = 0
+    this.elapsedSeconds = 0
     if (this.onStepCallback) {
       this.onStepCallback(-1)
     }
     this.stepListeners.forEach((l) => {
       try { l(-1) } catch {}
     })
+    this.notifyTimeline(0, 0)
+    this.notifyPlayback(false)
   }
 
   // Load Composition Preset (Loads chords, scales, BPM, and instrument timbre)
@@ -483,8 +530,10 @@ class AudioEngine {
     this.hasRainFoley = Boolean(options?.hasRainFoley ?? matched.hasRainFoley)
     this.hasGradualBuild = Boolean(options?.hasGradualBuild ?? matched.hasGradualBuild)
     this.hasSubBass = Boolean(options?.hasSubBass ?? matched.hasSubBass)
+    if (options?.duration) this.timelineDuration = options.duration
 
     this.updateAudioRouting()
+    this.notifyTimeline((this.elapsedSeconds / this.timelineDuration) * 100, this.elapsedSeconds)
   }
 
   public getActiveProfile(): GenreProfile {
@@ -505,7 +554,9 @@ class AudioEngine {
     this.hasGradualBuild = Boolean(profile.hasGradualBuild)
     this.hasSubBass = Boolean(profile.hasSubBass)
     this.params.tension = tension
+    if (profile.durationSeconds) this.timelineDuration = profile.durationSeconds
     this.updateAudioRouting()
+    this.notifyTimeline((this.elapsedSeconds / this.timelineDuration) * 100, this.elapsedSeconds)
   }
 
   // Calculate actual gain taking into account tension, mute, solo, and volume slider
@@ -1629,6 +1680,7 @@ class AudioEngine {
       this.currentStep = 0
       this.elapsedSeconds = 0
     }
+    this.notifyPlayback(true)
     this.scheduleStep()
   }
 
@@ -1644,6 +1696,7 @@ class AudioEngine {
     this.stepListeners.forEach((l) => {
       try { l(-1) } catch {}
     })
+    this.notifyPlayback(false)
   }
 
   public getIsPlaying(): boolean {

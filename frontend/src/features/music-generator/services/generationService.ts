@@ -115,7 +115,8 @@ class GenerationService {
       hasRainFoley: hasRain,
       hasGradualBuild: hasBuild,
       hasSubBass: isStrings,
-      hasStaccato: isStrings
+      hasStaccato: isStrings,
+      duration: take.duration
     })
     audioEngine.ensureContext()
     audioEngine.start()
@@ -130,7 +131,8 @@ class GenerationService {
       hasRainFoley: hasRain,
       hasGradualBuild: hasBuild,
       hasSubBass: isStrings,
-      hasStaccato: isStrings
+      hasStaccato: isStrings,
+      duration: take.duration
     })
     const blob = await audioEngine.exportSoundscapeWav(16)
     const url = URL.createObjectURL(blob)
