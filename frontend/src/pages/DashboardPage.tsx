@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Sparkles, Wand2, Plus, Piano, Drum, Guitar, Mic2, Film, Scissors, Download, Save, Check, Layers, Trash2, ChevronDown, ChevronUp, LocateFixed } from 'lucide-react'
+import { Sparkles, Wand2, Plus, Piano, Drum, Guitar, Mic2, Film, Scissors, Download, Save, Check, Layers, Trash2, ChevronDown, ChevronUp, LocateFixed, GripVertical, RotateCcw } from 'lucide-react'
 import { MainLayout } from '@/components/layout/MainLayout'
 import { AppRoute } from '@/components/layout/Sidebar'
 import { DawPianoRoll } from '@/components/daw/DawPianoRoll'
@@ -7,10 +7,38 @@ import { audioEngine, StemId } from '@/services/audioEngine'
 import { apiClient } from '@/services/apiClient'
 import { soundscapeService } from '@/features/adaptive-soundscape/services/soundscapeService'
 
+export interface StemClip {
+  id: string
+  name: string
+  startPct: number // 0 to 100
+  endPct: number // 0 to 100
+  bars: number[]
+  muted?: boolean
+}
+
+export interface StemTrack {
+  id: string
+  name: string
+  type: 'keys' | 'drums' | 'guitar' | 'vocal' | string
+  volume: number
+  muted: boolean
+  solo: boolean
+  bars: number[]
+  clips?: StemClip[]
+  splitPoints?: number[]
+}
+
 interface PageProps {
   isDark: boolean
   onToggleTheme: () => void
   onNavigate: (page: AppRoute) => void
+}
+
+function formatTimelineTime(percent: number): string {
+  const totalSeconds = Math.floor((percent / 100) * 105)
+  const mins = Math.floor(totalSeconds / 60)
+  const secs = totalSeconds % 60
+  return `0${mins}:${secs < 10 ? `0${secs}` : secs}`
 }
 
 function generateStemBars(stemType: string): number[] {
@@ -32,12 +60,17 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   const [promptText, setPromptText] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [playhead, setPlayhead] = useState(0)
-  const [stems, setStems] = useState([
-    { id: 'keys', name: 'Keys / Harmony', type: 'keys', volume: 80, muted: false, solo: false, bars: [] as number[] },
-    { id: 'drums', name: 'Neural Drums', type: 'drums', volume: 80, muted: false, solo: false, bars: [] as number[] },
-    { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', volume: 75, muted: false, solo: false, bars: [] as number[] },
-    { id: 'vocal', name: 'Atmosphere / Texture', type: 'vocal', volume: 70, muted: false, solo: false, bars: [] as number[] }
+  const [stems, setStems] = useState<StemTrack[]>([
+    { id: 'keys', name: 'Keys / Harmony', type: 'keys', volume: 80, muted: false, solo: false, bars: [] },
+    { id: 'drums', name: 'Neural Drums', type: 'drums', volume: 80, muted: false, solo: false, bars: [] },
+    { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', volume: 75, muted: false, solo: false, bars: [] },
+    { id: 'vocal', name: 'Atmosphere / Texture', type: 'vocal', volume: 70, muted: false, solo: false, bars: [] }
   ])
+
+  const [videoSplits, setVideoSplits] = useState<number[]>([])
+  const [splitNotice, setSplitNotice] = useState<string | null>(null)
+  const [draggedStemIdx, setDraggedStemIdx] = useState<number | null>(null)
+  const [dragOverStemIdx, setDragOverStemIdx] = useState<number | null>(null)
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
@@ -173,6 +206,22 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   }
 
   const handleAddTrack = (type: 'keys' | 'drums' | 'guitar' | 'vocal', labelPrefix: string) => {
+    const newBars = generateStemBars(type)
+    const points = [0, ...videoSplits, 100]
+    const clips: StemClip[] | undefined = videoSplits.length > 0 ? points.slice(0, -1).map((sPct, i) => {
+      const ePct = points[i + 1]
+      const startIdx = Math.floor((sPct / 100) * newBars.length)
+      const endIdx = Math.min(newBars.length, Math.ceil((ePct / 100) * newBars.length))
+      return {
+        id: `custom-clip-${i}-${Date.now()}`,
+        name: `Take ${String.fromCharCode(65 + i)}`,
+        startPct: sPct,
+        endPct: ePct,
+        bars: newBars.slice(startIdx, endIdx),
+        muted: false
+      }
+    }) : undefined
+
     setStems((prev) => [
       ...prev,
       {
@@ -182,7 +231,9 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         volume: 75,
         muted: false,
         solo: false,
-        bars: generateStemBars(type)
+        bars: newBars,
+        splitPoints: [...videoSplits],
+        clips
       }
     ])
   }
@@ -261,12 +312,116 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   }
 
   const handleSplitAtPlayhead = () => {
+    if (playhead <= 1 || playhead >= 99) {
+      setSplitNotice('⚠️ Position playhead between 00:01 and 01:44 to split')
+      setTimeout(() => setSplitNotice(null), 2500)
+      return
+    }
+
+    const cutPct = Math.round(playhead * 10) / 10
+
     setStems((prev) =>
-      prev.map((s) => ({
-        ...s,
-        bars: s.bars.map((b, idx) => (idx >= Math.floor(s.bars.length / 2) ? Math.floor(b * 0.7) : b))
-      }))
+      prev.map((stem) => {
+        const currentSplits = stem.splitPoints || []
+        if (currentSplits.some((sp) => Math.abs(sp - cutPct) < 1.5)) {
+          return stem
+        }
+
+        const newSplits = [...currentSplits, cutPct].sort((a, b) => a - b)
+        const fullBars = stem.bars.length > 0 ? stem.bars : generateStemBars(stem.type)
+        const points = [0, ...newSplits, 100]
+
+        const clips: StemClip[] = []
+        for (let i = 0; i < points.length - 1; i++) {
+          const sPct = points[i]
+          const ePct = points[i + 1]
+          const startIdx = Math.floor((sPct / 100) * fullBars.length)
+          const endIdx = Math.min(fullBars.length, Math.ceil((ePct / 100) * fullBars.length))
+          const clipBars = fullBars.slice(startIdx, endIdx)
+
+          clips.push({
+            id: `${stem.id}-clip-${i}-${Math.round(sPct)}`,
+            name: `Take ${String.fromCharCode(65 + (i % 26))}`,
+            startPct: sPct,
+            endPct: ePct,
+            bars: clipBars.length > 0 ? clipBars : [40, 50, 40],
+            muted: false
+          })
+        }
+
+        return {
+          ...stem,
+          bars: fullBars,
+          splitPoints: newSplits,
+          clips
+        }
+      })
     )
+
+    setVideoSplits((prev) => {
+      if (prev.some((sp) => Math.abs(sp - cutPct) < 1.5)) return prev
+      return [...prev, cutPct].sort((a, b) => a - b)
+    })
+
+    setSplitNotice(`✂️ Sliced timeline at ${formatTimelineTime(cutPct)} (${Math.round(cutPct)}%)`)
+    setTimeout(() => setSplitNotice(null), 3000)
+  }
+
+  const handleClearSplits = () => {
+    setStems((prev) => prev.map((s) => ({ ...s, splitPoints: [], clips: undefined })))
+    setVideoSplits([])
+    setSplitNotice('🔄 Merged all split clips back into continuous stems')
+    setTimeout(() => setSplitNotice(null), 2500)
+  }
+
+  const handleToggleClipMute = (stemId: string, clipId: string) => {
+    setStems((prev) =>
+      prev.map((s) => {
+        if (s.id !== stemId || !s.clips) return s
+        const nextClips = s.clips.map((c) => (c.id === clipId ? { ...c, muted: !c.muted } : c))
+        return { ...s, clips: nextClips }
+      })
+    )
+  }
+
+  // Drag and drop reordering handlers
+  const handleStemDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedStemIdx(index)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(index))
+  }
+
+  const handleStemDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (dragOverStemIdx !== index) {
+      setDragOverStemIdx(index)
+    }
+  }
+
+  const handleStemDragEnd = () => {
+    setDraggedStemIdx(null)
+    setDragOverStemIdx(null)
+  }
+
+  const handleStemDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault()
+    if (draggedStemIdx === null || draggedStemIdx === dropIndex) {
+      setDraggedStemIdx(null)
+      setDragOverStemIdx(null)
+      return
+    }
+    setStems((prev) => {
+      const updated = [...prev]
+      const [moved] = updated.splice(draggedStemIdx, 1)
+      updated.splice(dropIndex, 0, moved)
+      return updated
+    })
+    const movedName = stems[draggedStemIdx]?.name || 'Stem'
+    setDraggedStemIdx(null)
+    setDragOverStemIdx(null)
+    setSplitNotice(`↕️ Reordered ${movedName}`)
+    setTimeout(() => setSplitNotice(null), 2000)
   }
 
   return (
@@ -381,12 +536,33 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
 
             <button
               onClick={handleSplitAtPlayhead}
-              className={`px-2.5 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 cursor-pointer ${isDark ? 'border-white/10 bg-white/5 text-zinc-300 hover:text-white' : 'border-white bg-white/85 text-slate-800'
-                }`}
+              title={`Split clips at current playhead (${formatTimelineTime(playhead)})`}
+              className={`px-2.5 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 cursor-pointer transition ${
+                isDark ? 'border-orange-500/40 bg-orange-500/15 text-orange-300 hover:bg-orange-500/25' : 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+              }`}
             >
-              <Scissors className="w-3 h-3" />
-              Split at Playhead
+              <Scissors className="w-3 h-3 text-orange-400" />
+              <span>Split at Playhead ({formatTimelineTime(playhead)})</span>
             </button>
+
+            {videoSplits.length > 0 && (
+              <button
+                onClick={handleClearSplits}
+                title="Merge all sliced clips back into continuous stems"
+                className={`px-2 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 cursor-pointer transition ${
+                  isDark ? 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20' : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
+                }`}
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Merge Cuts ({videoSplits.length})</span>
+              </button>
+            )}
+
+            {splitNotice && (
+              <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/30 animate-pulse">
+                {splitNotice}
+              </span>
+            )}
 
             <button
               onClick={() => setFollowSlider(!followSlider)}
@@ -504,6 +680,19 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
               <span className={`text-[10px] font-mono ${isDark ? 'text-orange-200/80' : 'text-indigo-800'}`}>
                 [ Main_Video_Clip.mp4 • 24fps ]
               </span>
+              {/* Scene Cut Markers */}
+              {videoSplits.map((sp) => (
+                <div
+                  key={sp}
+                  style={{ left: `${sp}%` }}
+                  title={`Cut Marker at ${formatTimelineTime(sp)}`}
+                  className="absolute top-0 bottom-0 w-[2px] bg-amber-400 z-10 flex flex-col items-center pointer-events-none"
+                >
+                  <span className="text-[8px] bg-amber-500 text-black font-extrabold px-1 rounded-b shadow -translate-x-1/2">
+                    ✂
+                  </span>
+                </div>
+              ))}
               <div
                 style={{ left: `${playhead}%` }}
                 className="absolute top-0 bottom-0 w-[2px] bg-red-500 pointer-events-none"
@@ -512,14 +701,31 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
           </div>
 
           {/* Audio Stem Lanes */}
-          {stems.map((stem) => (
+          {stems.map((stem, idx) => (
             <div
               key={stem.id}
-              className={`p-2 rounded-2xl border flex items-center gap-3 ${stem.muted ? 'opacity-45' : 'opacity-100'
-                } ${isDark ? 'border-white/10 bg-zinc-950/60' : 'border-white/80 bg-white/75'}`}
+              draggable
+              onDragStart={(e) => handleStemDragStart(e, idx)}
+              onDragOver={(e) => handleStemDragOver(e, idx)}
+              onDragLeave={handleStemDragEnd}
+              onDrop={(e) => handleStemDrop(e, idx)}
+              onDragEnd={handleStemDragEnd}
+              className={`p-2 rounded-2xl border flex items-center gap-3 transition-all duration-150 ${stem.muted ? 'opacity-45' : 'opacity-100'} ${
+                draggedStemIdx === idx ? 'opacity-40 scale-[0.99] border-dashed border-orange-500' : ''
+              } ${
+                dragOverStemIdx === idx && draggedStemIdx !== idx
+                  ? isDark ? 'ring-2 ring-orange-500/70 bg-orange-500/10' : 'ring-2 ring-indigo-500/70 bg-indigo-50'
+                  : ''
+              } ${isDark ? 'border-white/10 bg-zinc-950/60' : 'border-white/80 bg-white/75'}`}
             >
               <div className="w-48 sm:w-60 shrink-0 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  <div
+                    title="Drag handle: click and drag to reorder stems"
+                    className="cursor-grab active:cursor-grabbing p-0.5 rounded hover:bg-white/10"
+                  >
+                    <GripVertical className="w-3.5 h-3.5 text-zinc-500 hover:text-orange-400 shrink-0" />
+                  </div>
                   {stem.type === 'keys' && <Piano className={`w-3.5 h-3.5 shrink-0 ${accentText}`} />}
                   {stem.type === 'drums' && <Drum className={`w-3.5 h-3.5 shrink-0 ${isDark ? 'text-amber-500' : 'text-violet-600'}`} />}
                   {stem.type === 'guitar' && <Guitar className={`w-3.5 h-3.5 shrink-0 ${isDark ? 'text-orange-600' : 'text-sky-600'}`} />}
@@ -566,32 +772,88 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
                 </div>
               </div>
 
-                <div
-                  onClick={handleSeekPlayhead}
-                  className={`flex-1 h-7 rounded-xl px-2 flex items-center justify-between gap-1 relative overflow-hidden cursor-pointer ${isDark ? 'bg-black/50' : 'bg-slate-900/5'
-                    }`}
-                >
-                  {stem.bars.length === 0 ? (
-                    <div className="w-full h-full flex items-center justify-center text-[10px] opacity-35 font-mono select-none">
-                      Empty Track • Enter prompt or pick a preset to synthesize audio
-                    </div>
-                  ) : (
-                    stem.bars.map((val, idx) => (
-                      <span
-                        key={idx}
-                        style={{ height: `${val}%` }}
-                        className={`w-1 rounded-full bg-gradient-to-t ${isDark ? 'from-orange-500 to-amber-300' : 'from-violet-500 via-indigo-500 to-sky-400'
-                          }`}
-                      />
-                    ))
-                  )}
+              <div
+                onClick={handleSeekPlayhead}
+                className={`flex-1 h-7 rounded-xl px-1.5 flex items-center relative overflow-hidden cursor-pointer ${isDark ? 'bg-black/50' : 'bg-slate-900/5'
+                  }`}
+              >
+                {stem.clips && stem.clips.length > 0 ? (
+                  <div className="w-full h-full flex items-center relative">
+                    {stem.clips.map((clip) => (
+                      <div
+                        key={clip.id}
+                        style={{ width: `${clip.endPct - clip.startPct}%` }}
+                        className={`h-full relative flex items-center px-1 border-r border-orange-500/50 transition-all ${
+                          clip.muted ? 'opacity-35 bg-red-950/20' : 'hover:bg-white/5'
+                        }`}
+                        title={`${clip.name} (${formatTimelineTime(clip.startPct)} - ${formatTimelineTime(clip.endPct)})${clip.muted ? ' • Muted' : ''}`}
+                      >
+                        <div className="absolute top-0.5 left-1 z-10 flex items-center gap-1 select-none pointer-events-auto">
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleToggleClipMute(stem.id, clip.id)
+                            }}
+                            className={`text-[8px] px-1 py-0.2 rounded font-mono font-bold cursor-pointer transition ${
+                              clip.muted
+                                ? 'bg-red-500/80 text-white line-through'
+                                : isDark
+                                ? 'bg-orange-500/30 text-orange-200 hover:bg-orange-500/50'
+                                : 'bg-indigo-600/20 text-indigo-900 hover:bg-indigo-600/40'
+                            }`}
+                          >
+                            {clip.name} {clip.muted ? '(M)' : ''}
+                          </span>
+                        </div>
+
+                        <div className="w-full h-full flex items-center justify-between gap-[1px] pt-2">
+                          {clip.bars.map((val, bIdx) => (
+                            <span
+                              key={bIdx}
+                              style={{ height: `${val}%` }}
+                              className={`w-0.5 sm:w-1 rounded-full ${
+                                clip.muted
+                                  ? 'bg-zinc-600'
+                                  : isDark
+                                  ? 'bg-gradient-to-t from-orange-500 to-amber-300'
+                                  : 'bg-gradient-to-t from-violet-500 via-indigo-500 to-sky-400'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : stem.bars.length === 0 ? (
+                  <div className="w-full h-full flex items-center justify-center text-[10px] opacity-35 font-mono select-none">
+                    Empty Track • Enter prompt or pick a preset to synthesize audio
+                  </div>
+                ) : (
+                  stem.bars.map((val, idx) => (
+                    <span
+                      key={idx}
+                      style={{ height: `${val}%` }}
+                      className={`w-1 rounded-full bg-gradient-to-t ${isDark ? 'from-orange-500 to-amber-300' : 'from-violet-500 via-indigo-500 to-sky-400'
+                        }`}
+                    />
+                  ))
+                )}
+
+                {stem.splitPoints?.map((sp) => (
                   <div
-                    style={{ left: `${playhead}%` }}
-                    className="absolute top-0 bottom-0 w-[2px] bg-red-500 pointer-events-none"
+                    key={sp}
+                    style={{ left: `${sp}%` }}
+                    className="absolute top-0 bottom-0 w-[1px] bg-orange-400/80 pointer-events-none z-10"
                   />
-                </div>
+                ))}
+
+                <div
+                  style={{ left: `${playhead}%` }}
+                  className="absolute top-0 bottom-0 w-[2px] bg-red-500 pointer-events-none z-20"
+                />
               </div>
-            ))}
+            </div>
+          ))}
           </div>
         )}
       </div>
