@@ -11,10 +11,11 @@ export interface GeneratedTake {
   genre: string
   mood: string
   bars: number[]
+  duration?: number
 }
 
 class GenerationService {
-  public generateTrack(prompt: string, genre: string, mood: string, bpm: number): GeneratedTake {
+  public generateTrack(prompt: string, genre: string, mood: string, bpm: number, duration = 180): GeneratedTake {
     const p = (prompt || '').toLowerCase()
 
     // 1. Explicit BPM parser: extract explicit BPM if prompted e.g. "90 BPM", "100bpm"
@@ -83,7 +84,8 @@ class GenerationService {
       bpm: effectiveBpm,
       genre: effectiveGenre,
       mood: effectiveMood,
-      bars
+      bars,
+      duration: Math.max(15, Math.min(180, duration))
     }
 
     // Persist take to MongoDB / LocalStorage so it dynamically populates the library and projects

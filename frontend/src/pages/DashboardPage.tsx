@@ -36,7 +36,7 @@ interface PageProps {
 }
 
 function formatTimelineTime(percent: number): string {
-  const totalSeconds = Math.floor((percent / 100) * 105)
+  const totalSeconds = Math.floor((percent / 100) * 180)
   const mins = Math.floor(totalSeconds / 60)
   const secs = totalSeconds % 60
   return `0${mins}:${secs < 10 ? `0${secs}` : secs}`
@@ -350,7 +350,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   const handleExportWav = async () => {
     setIsExporting(true)
     try {
-      await soundscapeService.exportWav('Dramatone_Master_Take', 16)
+      await soundscapeService.exportWav('Dramatone_Master_Take', 180)
     } finally {
       setIsExporting(false)
     }
@@ -358,7 +358,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
 
   const handleSplitAtPlayhead = () => {
     if (playhead <= 1 || playhead >= 99) {
-      setSplitNotice('⚠️ Position playhead between 00:01 and 01:44 to split')
+      setSplitNotice('⚠️ Position playhead between 00:01 and 02:59 to split')
       setTimeout(() => setSplitNotice(null), 2500)
       return
     }
@@ -738,7 +738,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
               <span>Follow Slider</span>
             </button>
             <span className={`text-[10px] font-mono ${isDark ? 'text-zinc-500' : 'text-slate-600'}`}>
-              00:00 — 00:25 — 00:50 — 01:15 — 01:45
+              00:00 — 00:45 — 01:30 — 02:15 — 03:00
             </span>
           </div>
 

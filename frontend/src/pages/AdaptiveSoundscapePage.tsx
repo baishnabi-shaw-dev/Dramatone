@@ -87,7 +87,7 @@ export function AdaptiveSoundscapePage({ isDark, onToggleTheme, onNavigate }: Pa
   const handleExportWav = async () => {
     setIsExporting(true)
     try {
-      await soundscapeService.exportWav(sceneName, 15)
+      await soundscapeService.exportWav(sceneName, 180)
       setExportedStatus('WAV Downloaded!')
       setTimeout(() => setExportedStatus(null), 3000)
     } finally {

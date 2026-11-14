@@ -189,15 +189,15 @@ export function MainLayout({
   }
 
   const formatTime = (percent: number) => {
-    const totalSeconds = Math.floor((percent / 100) * 105)
+    const totalSeconds = Math.floor((percent / 100) * 180)
     const mins = Math.floor(totalSeconds / 60)
     const secs = totalSeconds % 60
     return `0${mins}:${secs < 10 ? `0${secs}` : secs}`
   }
 
-  // Dynamic 24 FPS SMPTE Timecode (Bug 5 Fix: live frames advance with playhead)
+  // Dynamic 24 FPS SMPTE Timecode (live frames advance with playhead across 3-minute timeline)
   const formatTimecode = (percent: number) => {
-    const totalFrames = Math.floor((percent / 100) * 105 * 24)
+    const totalFrames = Math.floor((percent / 100) * 180 * 24)
     const frames = totalFrames % 24
     const totalSecs = Math.floor(totalFrames / 24)
     const secs = totalSecs % 60
@@ -453,7 +453,7 @@ export function MainLayout({
                 />
 
                 <span className={`text-[10px] font-mono shrink-0 ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
-                  {formatTime(playhead)} / 01:45
+                  {formatTime(playhead)} / 03:00
                 </span>
               </div>
 
@@ -707,7 +707,7 @@ export function MainLayout({
               className={`w-full h-1 cursor-pointer ${isDark ? 'accent-orange-500' : 'accent-indigo-600'}`}
             />
             <span className={`text-[11px] font-mono ${isDark ? 'text-zinc-500' : 'text-slate-600'}`}>
-              01:45
+              03:00
             </span>
           </div>
         </footer>

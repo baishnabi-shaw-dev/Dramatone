@@ -1618,9 +1618,9 @@ class AudioEngine {
     return array
   }
 
-  // Export to true 16-bit 44.1kHz stereo .WAV using native OfflineAudioContext (clamped to max 01:45 / 105s)
-  public async exportSoundscapeWav(durationSeconds = 16): Promise<Blob> {
-    const clampedDuration = Math.max(5, Math.min(105, durationSeconds))
+  // Export to true 16-bit 44.1kHz stereo .WAV using native OfflineAudioContext (clamped to max 03:00 / 180s)
+  public async exportSoundscapeWav(durationSeconds = 180): Promise<Blob> {
+    const clampedDuration = Math.max(5, Math.min(180, durationSeconds))
     const sampleRate = 44100
     const offlineCtx = new OfflineAudioContext(2, sampleRate * clampedDuration, sampleRate)
 

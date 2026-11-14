@@ -34,6 +34,7 @@ export interface ArrangedComposition {
     guitar: string
     vocal: string
   }
+  durationSeconds?: number
   isAiGenerated: boolean
   isMock: boolean
 }
@@ -194,6 +195,7 @@ class GeminiArrangerService {
         guitar: parsed.stemNames?.guitar || 'Melodic Voice',
         vocal: parsed.stemNames?.vocal || 'Atmospheric Texture'
       },
+      durationSeconds: Math.max(15, Math.min(180, Number(parsed.durationSeconds) || 180)),
       isAiGenerated: true,
       isMock: false
     }

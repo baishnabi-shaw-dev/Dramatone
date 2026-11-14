@@ -94,7 +94,7 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
   const handleGenerate = () => {
     setIsGenerating(true)
     setTimeout(() => {
-      const newTake = generationService.generateTrack(prompt, selectedGenre, selectedMood, bpm)
+      const newTake = generationService.generateTrack(prompt, selectedGenre, selectedMood, bpm, duration)
       setTakes((prev) => [newTake, ...prev])
       setIsGenerating(false)
     }, 450)
@@ -270,7 +270,7 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
 
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-[11px]">
-                    <span className="opacity-70 font-medium">Length (Max 01:45)</span>
+                    <span className="opacity-70 font-medium">Length (Max 03:00)</span>
                     <span className="font-mono font-bold text-amber-400">
                       0{Math.floor(duration / 60)}:{(duration % 60).toString().padStart(2, '0')} ({duration}s)
                     </span>
@@ -278,7 +278,7 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
                   <input
                     type="range"
                     min="15"
-                    max="105"
+                    max="180"
                     step="15"
                     value={duration}
                     onChange={(e) => setDuration(Number(e.target.value))}
@@ -366,6 +366,10 @@ export function MusicGeneratorPage({ isDark, onToggleTheme, onNavigate }: PagePr
                         <span>{take.mood}</span>
                         <span>•</span>
                         <span>{bpm} BPM</span>
+                        <span>•</span>
+                        <span>
+                          0{Math.floor((take.duration || duration) / 60)}:{((take.duration || duration) % 60).toString().padStart(2, '0')}
+                        </span>
                       </div>
                     </div>
 

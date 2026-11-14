@@ -50,7 +50,7 @@ class SoundscapeService {
     URL.revokeObjectURL(url)
   }
 
-  public async exportWav(title = 'Adaptive Soundscape', durationSeconds = 15) {
+  public async exportWav(title = 'Adaptive Soundscape', durationSeconds = 180) {
     const blob = await audioEngine.exportSoundscapeWav(durationSeconds)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
