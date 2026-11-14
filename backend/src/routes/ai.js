@@ -83,12 +83,13 @@ Format:
     })
 
     if (!response.ok) {
-      const errText = await response.text()
-      console.warn('Gemini API Error:', response.status, errText)
+      const errBody = await response.json().catch(() => ({}))
+      const msg = errBody?.error?.message || response.statusText
+      console.warn('Gemini API Error:', response.status, msg)
       return res.status(200).json({
         success: false,
         geminiConfigured: true,
-        error: `Gemini API returned ${response.status}: ${response.statusText}`
+        error: `Gemini API ${response.status}: ${msg}`
       })
     }
 
@@ -98,7 +99,8 @@ Format:
       return res.status(200).json({ success: false, error: 'Empty response from Gemini' })
     }
 
-    const parsed = JSON.parse(rawText)
+    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
+    const parsed = JSON.parse(cleaned)
     return res.json({ success: true, arrangement: parsed })
   } catch (error) {
     console.error('Error proxying Gemini API:', error)

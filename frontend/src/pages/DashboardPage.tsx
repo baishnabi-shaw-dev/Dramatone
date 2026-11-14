@@ -42,18 +42,18 @@ function formatTimelineTime(percent: number): string {
   return `0${mins}:${secs < 10 ? `0${secs}` : secs}`
 }
 
-function generateStemBars(stemType: string): number[] {
+function generateStemBars(stemType: string, notes?: Array<{ step: number; stem?: string }>): number[] {
   const count = 48
   return Array.from({ length: count }, (_, i) => {
-    if (stemType === 'drums') {
-      return (i % 4 === 0) ? Math.floor(75 + Math.random() * 25) : (i % 2 === 0) ? Math.floor(35 + Math.random() * 25) : Math.floor(10 + Math.random() * 15)
-    } else if (stemType === 'keys') {
-      return Math.floor(40 + Math.sin(i / 3) * 25 + Math.random() * 20)
-    } else if (stemType === 'guitar') {
-      return Math.floor(30 + ((i % 8) / 8) * 45 + Math.random() * 15)
-    } else {
-      return Math.floor(25 + Math.cos(i / 5) * 20 + Math.random() * 20)
-    }
+    const stepIdx = Math.floor((i / count) * 64)
+    const hasNote = notes?.some(
+      (n) => n.step === stepIdx && (n.stem === stemType || (!n.stem && stemType === 'keys'))
+    )
+    if (hasNote) return Math.floor(55 + (stepIdx % 4 === 0 ? 30 : 15))
+    if (stemType === 'keys') return Math.floor(35 + Math.sin(i / 4) * 15)
+    if (stemType === 'drums') return i % 8 === 0 ? 60 : i % 4 === 0 ? 30 : 12
+    if (stemType === 'guitar') return i % 4 === 2 ? 45 : 18
+    return 18 + Math.floor(Math.cos(i / 5) * 8)
   })
 }
 
@@ -62,10 +62,10 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   const [isGenerating, setIsGenerating] = useState(false)
   const [playhead, setPlayhead] = useState(0)
   const [stems, setStems] = useState<StemTrack[]>([
-    { id: 'keys', name: 'Keys / Harmony', type: 'keys', volume: 80, muted: false, solo: false, bars: [] },
-    { id: 'drums', name: 'Neural Drums', type: 'drums', volume: 80, muted: false, solo: false, bars: [] },
-    { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', volume: 75, muted: false, solo: false, bars: [] },
-    { id: 'vocal', name: 'Atmosphere / Texture', type: 'vocal', volume: 70, muted: false, solo: false, bars: [] }
+    { id: 'keys', name: 'Keys / Harmony', type: 'keys', volume: 80, muted: false, solo: false, bars: generateStemBars('keys') },
+    { id: 'drums', name: 'Neural Drums', type: 'drums', volume: 80, muted: false, solo: false, bars: generateStemBars('drums') },
+    { id: 'guitar', name: 'Acoustic Pluck', type: 'guitar', volume: 75, muted: false, solo: false, bars: generateStemBars('guitar') },
+    { id: 'vocal', name: 'Atmosphere / Texture', type: 'vocal', volume: 70, muted: false, solo: false, bars: generateStemBars('vocal') }
   ])
 
   const [videoSplits, setVideoSplits] = useState<number[]>([])
@@ -82,6 +82,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   // Gemini AI Arranger state
   const [aiArrangement, setAiArrangement] = useState<ArrangedComposition | null>(null)
   const [hasGeminiKey, setHasGeminiKey] = useState<boolean>(() => geminiArrangerService.hasApiKey())
+  const [geminiError, setGeminiError] = useState<string | null>(null)
   const [showKeyPrompt, setShowKeyPrompt] = useState(false)
   const [tempApiKey, setTempApiKey] = useState('')
   const [copiedPrompt, setCopiedPrompt] = useState(false)
@@ -132,7 +133,20 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
 
     try {
       const promptToUse = promptText.trim() || 'Cinematic score, emotional, tender'
-      const arranged = await geminiArrangerService.arrangeMusic(promptToUse)
+      let arranged: ArrangedComposition
+
+      try {
+        arranged = await geminiArrangerService.arrangeMusic(promptToUse)
+        setGeminiError(null)
+      } catch (geminiErr: any) {
+        console.warn('Gemini arrangement failed, falling back to procedural:', geminiErr)
+        const errMsg = geminiErr?.message || 'API Error'
+        setGeminiError(errMsg)
+        setSplitNotice(`⚠️ ${errMsg} — generated via procedural arranger`)
+        setTimeout(() => setSplitNotice(null), 4500)
+        arranged = geminiArrangerService.proceduralArranger(promptToUse)
+      }
+
       setAiArrangement(arranged)
 
       // 1. Direct load into audio engine with synthesized profile
@@ -165,7 +179,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         } catch {}
       }
 
-      // 3. Update stems view with tailored names and waveforms
+      // 3. Update stems view with tailored names and deterministic waveforms
       setStems((prev) =>
         prev.map((s) => ({
           ...s,
@@ -179,18 +193,28 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
               : s.id === 'vocal'
               ? arranged.stemNames.vocal
               : s.name,
-          bars: generateStemBars(s.type)
+          bars: generateStemBars(s.type, arranged.notes)
         }))
       )
 
-      setSplitNotice(
-        arranged.isMock
-          ? `🤖 Procedural Score: "${arranged.title}" (${arranged.bpm} BPM • ${arranged.key})`
-          : `⚡ Gemini 1.5 Score: "${arranged.title}" (${arranged.bpm} BPM • ${arranged.key})`
-      )
-      setTimeout(() => setSplitNotice(null), 3500)
-    } catch (err) {
+      // 4. Start audio playback from step 0
+      audioEngine.stop()
+      audioEngine.seekStep(0)
+      audioEngine.start()
+      setPlayhead(0)
+
+      if (!geminiError) {
+        setSplitNotice(
+          arranged.isMock
+            ? `🤖 Procedural Score: "${arranged.title}" (${arranged.bpm} BPM • ${arranged.key})`
+            : `⚡ Gemini 1.5 Score: "${arranged.title}" (${arranged.bpm} BPM • ${arranged.key})`
+        )
+        setTimeout(() => setSplitNotice(null), 3500)
+      }
+    } catch (err: any) {
       console.error('Error during AI generation:', err)
+      setSplitNotice(`❌ ${err?.message || 'Generation failed'}`)
+      setTimeout(() => setSplitNotice(null), 4000)
     } finally {
       setIsGenerating(false)
     }
@@ -200,6 +224,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
     if (!tempApiKey.trim()) return
     geminiArrangerService.setApiKey(tempApiKey.trim())
     setHasGeminiKey(true)
+    setGeminiError(null)
     setShowKeyPrompt(false)
     setTempApiKey('')
     setSplitNotice('🔑 Gemini API Key saved to session!')
@@ -226,7 +251,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
   }
 
   const handleAddTrack = (type: 'keys' | 'drums' | 'guitar' | 'vocal', labelPrefix: string) => {
-    const newBars = generateStemBars(type)
+    const newBars = generateStemBars(type, audioEngine.getActiveNotes())
     const points = [0, ...videoSplits, 100]
     const clips: StemClip[] | undefined = videoSplits.length > 0 ? points.slice(0, -1).map((sPct, i) => {
       const ePct = points[i + 1]
@@ -348,7 +373,7 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
         }
 
         const newSplits = [...currentSplits, cutPct].sort((a, b) => a - b)
-        const fullBars = stem.bars.length > 0 ? stem.bars : generateStemBars(stem.type)
+        const fullBars = stem.bars.length > 0 ? stem.bars : generateStemBars(stem.type, audioEngine.getActiveNotes())
         const points = [0, ...newSplits, 100]
 
         const clips: StemClip[] = []
@@ -473,7 +498,16 @@ export function DashboardPage({ isDark, onToggleTheme, onNavigate }: PageProps) 
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {hasGeminiKey ? (
+            {geminiError ? (
+              <button
+                onClick={() => setShowKeyPrompt(!showKeyPrompt)}
+                title={`Gemini API Error: ${geminiError}. Click to view/update API Key.`}
+                className="text-[10px] font-mono px-2 py-0.5 rounded-full border border-rose-500/40 bg-rose-500/10 text-rose-400 flex items-center gap-1 cursor-pointer hover:bg-rose-500/20 transition"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                <span>Gemini Key Error</span>
+              </button>
+            ) : hasGeminiKey ? (
               <button
                 onClick={() => setShowKeyPrompt(!showKeyPrompt)}
                 title="Google Gemini API Active. Click to view/update API Key."

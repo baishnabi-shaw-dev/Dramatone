@@ -5,7 +5,7 @@ export interface NoteStep {
   id?: string
   midi: number
   step: number // 0 to 63
-  duration: number // in 16th steps
+  duration?: number // in 16th steps
   stem?: 'keys' | 'drums' | 'guitar' | 'vocal' | string
 }
 
@@ -82,7 +82,8 @@ class GeminiArrangerService {
   }
 
   public getApiKey(): string {
-    return this.sessionApiKey
+    const envKey = (import.meta.env.GEMINI_API_KEY || '').trim()
+    return envKey || this.sessionApiKey
   }
 
   public setApiKey(key: string) {
@@ -93,18 +94,20 @@ class GeminiArrangerService {
   }
 
   public hasApiKey(): boolean {
-    return this.isBackendKeyActive || Boolean(this.sessionApiKey)
+    return Boolean(this.getApiKey()) || this.isBackendKeyActive
   }
 
   // Primary method to arrange music from any prompt
   public async arrangeMusic(prompt: string): Promise<ArrangedComposition> {
-    // 1. Try single backend/.env GEMINI_API_KEY first
+    const activeKey = this.getApiKey()
+
+    // 1. Try single backend/.env GEMINI_API_KEY via proxy if backend is online
     try {
       const backendRes = await fetch(`${BACKEND_AI_URL}/arrange`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt }),
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(12000)
       })
 
       if (backendRes.ok) {
@@ -112,22 +115,29 @@ class GeminiArrangerService {
         if (data.success && data.arrangement) {
           return this.sanitizeParsedArrangement(data.arrangement, prompt)
         }
+        if (data.error) {
+          throw new Error(data.error)
+        }
       }
-    } catch {
-      // Backend request skipped or offline
+    } catch (e: any) {
+      if (e?.message && !e.message.includes('fetch') && !e.message.includes('timeout') && !e.message.includes('Failed')) {
+        throw e // Pass meaningful Gemini error to the caller
+      }
+      // If backend is offline, proceed to direct client call using activeKey
     }
 
-    // 2. If user saved an in-session key, query Gemini directly
-    if (this.sessionApiKey) {
+    // 2. Direct Gemini API call using key from backend/.env or browser session
+    if (activeKey) {
       try {
-        const directResult = await this.queryGeminiApi(prompt, this.sessionApiKey)
+        const directResult = await this.queryGeminiApi(prompt, activeKey)
         if (directResult) return directResult
-      } catch (err) {
-        console.warn('⚠️ Direct Gemini API call failed:', err)
+      } catch (err: any) {
+        console.error('Gemini API Error:', err)
+        throw new Error(`Gemini API ${err.message || 'Request failed'}`)
       }
     }
 
-    // 3. Fallback procedural arranger (works instantly while user adds GEMINI_API_KEY to backend/.env)
+    // 3. Fallback procedural arranger (works when no API key is provided)
     return this.proceduralArranger(prompt)
   }
 
@@ -252,14 +262,17 @@ Format:
     })
 
     if (!res.ok) {
-      throw new Error(`Gemini HTTP ${res.status}: ${res.statusText}`)
+      const errBody = await res.json().catch(() => ({}))
+      const msg = errBody?.error?.message || res.statusText
+      throw new Error(`Google API ${res.status}: ${msg}`)
     }
 
     const data = await res.json()
     const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text
     if (!rawText) return null
 
-    const parsed = JSON.parse(rawText)
+    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim()
+    const parsed = JSON.parse(cleaned)
     return this.sanitizeParsedArrangement(parsed, prompt)
   }
 
